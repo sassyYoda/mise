@@ -34,7 +34,14 @@ Mise en Place is an 8-week portfolio MVP for a distributed restaurant-reservatio
   3. At least 50 NYC restaurants with OpenTable platform IDs, neighborhood, cuisine, price tier, and cover photo are seeded in PostgreSQL and appear as scheduled entries in the Redis ZSET `sched:polls`.
   4. TimescaleDB `availability_events` and `poll_log` hypertables exist with `chunk_time_interval = INTERVAL '1 day'`, and `polls.completed` events are written to `poll_log` with measurable latency.
   5. Poll success rate is >= 99% hourly across a 24-hour window, measured from `poll_log.success / total` with the shared `httpx.AsyncClient` holding stable file-descriptor count.
-**Plans**: TBD
+**Plans**: 6 plans
+Plans:
+- [ ] 01-01-scaffold-toolchain-PLAN.md — Monorepo scaffold, pinned deps, Makefile, Wave-0 test stubs
+- [ ] 01-02-infra-schema-topics-PLAN.md — Docker Compose infra, Alembic migrations, Kafka topics
+- [ ] 01-03-admin-secrets-curation-PLAN.md — Twilio 10DLC, domain, GCP, Resy accounts, VAPID, HMAC, 50 restaurants
+- [ ] 01-04-shared-kernel-PLAN.md — shared/events.py, shared/db.py, shared/kafka.py, scheduler Lua, seed script
+- [ ] 01-05-poller-service-PLAN.md — OpenTable adapter, scheduler loop, reaper, publisher, main entry point
+- [ ] 01-06-perf02-verification-PLAN.md — check_poll_success.py, README legal+Kafka sections, 24h PERF-02 run
 **UI hint**: no
 
 ### Phase 2: State Machine & Event Pipeline
