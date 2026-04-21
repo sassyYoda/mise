@@ -134,17 +134,85 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Empty initially; populated by roadmap creation.
+Populated by roadmap creation 2026-04-20. All v1 REQ-IDs map to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by gsd-roadmapper) | | |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Pending |
+| FOUND-06 | Phase 1 | Pending |
+| POLL-01 | Phase 1 | Pending |
+| POLL-02 | Phase 3 | Pending |
+| POLL-03 | Phase 1 | Pending |
+| POLL-04 | Phase 3 | Pending |
+| POLL-05 | Phase 3 | Pending |
+| POLL-06 | Phase 3 | Pending |
+| POLL-07 | Phase 1 | Pending |
+| STATE-01 | Phase 2 | Pending |
+| STATE-02 | Phase 2 | Pending |
+| STATE-03 | Phase 2 | Pending |
+| STATE-04 | Phase 2 | Pending |
+| STATE-05 | Phase 2 | Pending |
+| STATE-06 | Phase 2 | Pending |
+| WATCH-01 | Phase 5 | Pending |
+| WATCH-02 | Phase 5 | Pending |
+| WATCH-03 | Phase 5 | Pending |
+| WATCH-04 | Phase 5 | Pending |
+| WATCH-05 | Phase 5 | Pending |
+| WATCH-06 | Phase 5 | Pending |
+| NOTIF-01 | Phase 4 | Pending |
+| NOTIF-02 | Phase 4 | Pending |
+| NOTIF-03 | Phase 4 | Pending |
+| NOTIF-04 | Phase 4 | Pending |
+| NOTIF-05 | Phase 4 | Pending |
+| NOTIF-06 | Phase 4 | Pending |
+| NOTIF-07 | Phase 4 | Pending |
+| PATTERN-01 | Phase 6 | Pending |
+| PATTERN-02 | Phase 6 | Pending |
+| PATTERN-03 | Phase 6 | Pending |
+| FE-01 | Phase 6 | Pending |
+| FE-02 | Phase 6 | Pending |
+| FE-03 | Phase 6 | Pending |
+| FE-04 | Phase 6 | Pending |
+| FE-05 | Phase 6 | Pending |
+| FE-06 | Phase 6 | Pending |
+| FE-07 | Phase 6 | Pending |
+| API-01 | Phase 5 | Pending |
+| API-02 | Phase 5 | Pending |
+| API-03 | Phase 5 | Pending |
+| DEPLOY-01 | Phase 7 | Pending |
+| DEPLOY-02 | Phase 7 | Pending |
+| DEPLOY-03 | Phase 7 | Pending |
+| DEPLOY-04 | Phase 7 | Pending |
+| DEPLOY-05 | Phase 7 | Pending |
+| DEPLOY-06 | Phase 7 | Pending |
+| DEPLOY-07 | Phase 7 | Pending |
+| PERF-01 | Phase 4 | Pending |
+| PERF-02 | Phase 1 | Pending |
+| PERF-03 | Phase 4 | Pending |
+| PERF-04 | Phase 7 | Pending |
+| PERF-05 | Phase 3 | Pending |
 
 **Coverage:**
-- v1 requirements: 46 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 46 ⚠️ (pending roadmap)
+- v1 requirements: 57 total (note: original REQUIREMENTS.md footer stated 46; actual ID count across all categories is 57 — FOUND:6, POLL:7, STATE:6, WATCH:6, NOTIF:7, PATTERN:3, FE:7, API:3, DEPLOY:7, PERF:5)
+- Mapped to phases: 57 ✓
+- Unmapped: 0 ✓
+
+### Coverage by Phase
+
+| Phase | Requirements | Count |
+|-------|-------------|-------|
+| Phase 1 — Foundation, Admin & OpenTable Polling | FOUND-01..06, POLL-01, POLL-03, POLL-07, PERF-02 | 10 |
+| Phase 2 — State Machine & Event Pipeline | STATE-01..06 | 6 |
+| Phase 3 — Resy & Playwright Fleet | POLL-02, POLL-04, POLL-05, POLL-06, PERF-05 | 5 |
+| Phase 4 — Notification Pipeline | NOTIF-01..07, PERF-01, PERF-03 | 9 |
+| Phase 5 — API, Watchlist CRUD & SSE | WATCH-01..06, API-01, API-02, API-03 | 9 |
+| Phase 6 — Pattern Intelligence & Frontend PWA | PATTERN-01..03, FE-01..07 | 10 |
+| Phase 7 — Deploy, Observability & Portfolio Polish | DEPLOY-01..07, PERF-04 | 8 |
 
 ---
 *Requirements defined: 2026-04-20*
-*Last updated: 2026-04-20 after initial definition*
+*Last updated: 2026-04-20 — traceability populated by gsd-roadmapper*
