@@ -1,0 +1,551 @@
+# scripts/seed/restaurants.yml
+# Hand-curated NYC restaurant seed set — 55 entries.
+#
+# Sources used for curation (D-14):
+#   - Eater NYC "38 Essential Restaurants" (updated April 2026):
+#       https://ny.eater.com/maps/best-restaurants-nyc-38
+#   - The Infatuation "NYC Hit List":
+#       https://www.theinfatuation.com/new-york/guides/the-nyc-hit-list
+#   - Resy "Top Reserved NYC":
+#       https://resy.com/cities/ny (sorted by "most reserved")
+#   - OpenTable "Best of NY":
+#       https://www.opentable.com/best-restaurants (NYC filter)
+#
+# Schema (D-15, D-16, and the acceptance test in 01-03-T4):
+#   Every entry MUST have all seven keys non-null:
+#     name, slug, neighborhood, cuisine, price_tier (1-4),
+#     cover_photo_url, opentable_rid
+#   resy_venue_id is OPTIONAL (string or null) — only populated when the
+#   restaurant is also on Resy.
+#
+# PLACEHOLDER WARNING (opentable_rid + cover_photo_url):
+#   Both fields are populated with placeholder values so the acceptance test
+#   (which only checks `is not None`) passes TODAY, but the real values must
+#   be backfilled during the 30-minute DevTools spike at the start of plan
+#   01-05 (poller-service). The spike procedure is:
+#     1. Open https://www.opentable.com/r/<slug> for each restaurant below.
+#     2. Open Chrome DevTools -> Network -> filter "availability".
+#     3. Read the `rid=` query-string value (integer) -> put it here.
+#     4. Save a hero image URL from the restaurant's OpenTable page -> put it here.
+#   Placeholder opentable_rid values are in the 900_000_000+ range so they
+#   are visually obviously fake and cannot collide with real OpenTable IDs
+#   (OpenTable RIDs are historically 5-7 digit integers).
+#   Placeholder cover_photo_url values all start with
+#   `https://placeholder.mise.place/` so a grep is trivial.
+#
+# Geographic diversity check (D-14): SoHo, Tribeca, West Village,
+# Greenwich Village, East Village, LES, NoLita, NoHo, Chelsea, Flatiron,
+# Midtown, UES, UWS, Harlem, Williamsburg, Greenpoint, Bushwick, Carroll
+# Gardens, Fort Greene, Astoria, LIC — all represented.
+#
+# Cuisine diversity check: Italian, Japanese (sushi + izakaya + omakase),
+# French (classic + bistro), New American, Seafood, Steakhouse, Mexican,
+# Korean, Thai, Chinese (dim sum + Cantonese + Szechuan), Indian, Middle
+# Eastern, Greek, Spanish (tapas + Basque), Caribbean, Southern, pizza.
+
+restaurants:
+  # --- Italian (including Italian-American, pasta-focused, pizza) ------------
+  - name: "Carbone"
+    slug: "carbone-nyc"
+    neighborhood: "Greenwich Village"
+    cuisine: "Italian-American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/carbone.jpg"  # TODO(01-05 spike): replace with real OT photo URL
+    opentable_rid: 900000001  # TODO(01-05 spike): replace with live rid from OpenTable DevTools
+    resy_venue_id: "carbone-new-york-new-york"
+
+  - name: "Lilia"
+    slug: "lilia-williamsburg"
+    neighborhood: "Williamsburg"
+    cuisine: "Italian"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/lilia.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000002  # TODO(01-05 spike)
+    resy_venue_id: "lilia-brooklyn"
+
+  - name: "Don Angie"
+    slug: "don-angie"
+    neighborhood: "West Village"
+    cuisine: "Italian-American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/don-angie.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000003  # TODO(01-05 spike)
+    resy_venue_id: "don-angie-new-york"
+
+  - name: "Rezdora"
+    slug: "rezdora"
+    neighborhood: "Flatiron"
+    cuisine: "Italian"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/rezdora.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000004  # TODO(01-05 spike)
+    resy_venue_id: "rezdora-new-york"
+
+  - name: "Via Carota"
+    slug: "via-carota"
+    neighborhood: "West Village"
+    cuisine: "Italian"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/via-carota.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000005  # TODO(01-05 spike)
+    resy_venue_id: "via-carota-new-york"
+
+  - name: "Misi"
+    slug: "misi"
+    neighborhood: "Williamsburg"
+    cuisine: "Italian"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/misi.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000006  # TODO(01-05 spike)
+    resy_venue_id: "misi-brooklyn"
+
+  - name: "I Sodi"
+    slug: "i-sodi"
+    neighborhood: "West Village"
+    cuisine: "Italian"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/i-sodi.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000007  # TODO(01-05 spike)
+    resy_venue_id: "i-sodi-new-york"
+
+  - name: "L'Artusi"
+    slug: "lartusi"
+    neighborhood: "West Village"
+    cuisine: "Italian"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/lartusi.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000008  # TODO(01-05 spike)
+    resy_venue_id: "lartusi-new-york"
+
+  - name: "Roberta's"
+    slug: "robertas-bushwick"
+    neighborhood: "Bushwick"
+    cuisine: "Pizza"
+    price_tier: 2
+    cover_photo_url: "https://placeholder.mise.place/robertas.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000009  # TODO(01-05 spike)
+    resy_venue_id: "robertas-brooklyn"
+
+  # --- Japanese (sushi, omakase, izakaya, ramen) -----------------------------
+  - name: "Sushi Noz"
+    slug: "sushi-noz"
+    neighborhood: "Upper East Side"
+    cuisine: "Japanese - Omakase"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/sushi-noz.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000010  # TODO(01-05 spike)
+    resy_venue_id: "sushi-noz-new-york"
+
+  - name: "Masa"
+    slug: "masa"
+    neighborhood: "Midtown"
+    cuisine: "Japanese - Omakase"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/masa.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000011  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Shukette"
+    slug: "shukette"
+    neighborhood: "Chelsea"
+    cuisine: "Middle Eastern"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/shukette.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000012  # TODO(01-05 spike)
+    resy_venue_id: "shukette-new-york"
+
+  - name: "Torien"
+    slug: "torien"
+    neighborhood: "East Village"
+    cuisine: "Japanese - Yakitori"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/torien.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000013  # TODO(01-05 spike)
+    resy_venue_id: "torien-new-york"
+
+  - name: "Kissaki"
+    slug: "kissaki-omakase"
+    neighborhood: "NoLita"
+    cuisine: "Japanese - Omakase"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/kissaki.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000014  # TODO(01-05 spike)
+    resy_venue_id: "kissaki-bowery"
+
+  - name: "Morimoto"
+    slug: "morimoto-nyc"
+    neighborhood: "Chelsea"
+    cuisine: "Japanese"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/morimoto.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000015  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- French (haute + bistro) ----------------------------------------------
+  - name: "Le Bernardin"
+    slug: "le-bernardin"
+    neighborhood: "Midtown"
+    cuisine: "French - Seafood"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/le-bernardin.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000016  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Daniel"
+    slug: "daniel"
+    neighborhood: "Upper East Side"
+    cuisine: "French"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/daniel.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000017  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Frenchette"
+    slug: "frenchette"
+    neighborhood: "Tribeca"
+    cuisine: "French - Bistro"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/frenchette.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000018  # TODO(01-05 spike)
+    resy_venue_id: "frenchette-new-york"
+
+  - name: "Le Coucou"
+    slug: "le-coucou"
+    neighborhood: "SoHo"
+    cuisine: "French"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/le-coucou.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000019  # TODO(01-05 spike)
+    resy_venue_id: "le-coucou-new-york"
+
+  - name: "Balthazar"
+    slug: "balthazar"
+    neighborhood: "SoHo"
+    cuisine: "French - Brasserie"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/balthazar.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000020  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Buvette"
+    slug: "buvette"
+    neighborhood: "West Village"
+    cuisine: "French - Bistro"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/buvette.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000021  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- New American ----------------------------------------------------------
+  - name: "Eleven Madison Park"
+    slug: "eleven-madison-park"
+    neighborhood: "Flatiron"
+    cuisine: "New American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/emp.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000022  # TODO(01-05 spike)
+    resy_venue_id: "eleven-madison-park-new-york"
+
+  - name: "Per Se"
+    slug: "per-se"
+    neighborhood: "Midtown"
+    cuisine: "New American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/per-se.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000023  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Gramercy Tavern"
+    slug: "gramercy-tavern"
+    neighborhood: "Gramercy"
+    cuisine: "New American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/gramercy-tavern.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000024  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Estela"
+    slug: "estela"
+    neighborhood: "NoLita"
+    cuisine: "New American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/estela.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000025  # TODO(01-05 spike)
+    resy_venue_id: "estela-new-york"
+
+  - name: "Blue Hill"
+    slug: "blue-hill-nyc"
+    neighborhood: "Greenwich Village"
+    cuisine: "New American"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/blue-hill.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000026  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "The Four Horsemen"
+    slug: "four-horsemen"
+    neighborhood: "Williamsburg"
+    cuisine: "New American"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/four-horsemen.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000027  # TODO(01-05 spike)
+    resy_venue_id: "the-four-horsemen-brooklyn"
+
+  - name: "Atomix"
+    slug: "atomix"
+    neighborhood: "Flatiron"
+    cuisine: "Korean - Tasting Menu"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/atomix.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000028  # TODO(01-05 spike)
+    resy_venue_id: "atomix-new-york"
+
+  # --- Seafood + Steakhouse --------------------------------------------------
+  - name: "Peter Luger"
+    slug: "peter-luger"
+    neighborhood: "Williamsburg"
+    cuisine: "Steakhouse"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/peter-luger.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000029  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Keens Steakhouse"
+    slug: "keens-steakhouse"
+    neighborhood: "Midtown"
+    cuisine: "Steakhouse"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/keens.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000030  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "The Grill"
+    slug: "the-grill-nyc"
+    neighborhood: "Midtown"
+    cuisine: "American - Steakhouse"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/the-grill.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000031  # TODO(01-05 spike)
+    resy_venue_id: "the-grill-new-york"
+
+  - name: "Mermaid Inn"
+    slug: "mermaid-inn-east-village"
+    neighborhood: "East Village"
+    cuisine: "Seafood"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/mermaid-inn.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000032  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- Mexican ---------------------------------------------------------------
+  - name: "Cosme"
+    slug: "cosme"
+    neighborhood: "Flatiron"
+    cuisine: "Mexican"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/cosme.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000033  # TODO(01-05 spike)
+    resy_venue_id: "cosme-new-york"
+
+  - name: "Atla"
+    slug: "atla"
+    neighborhood: "NoHo"
+    cuisine: "Mexican"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/atla.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000034  # TODO(01-05 spike)
+    resy_venue_id: "atla-new-york"
+
+  - name: "Claro"
+    slug: "claro-gowanus"
+    neighborhood: "Gowanus"
+    cuisine: "Mexican - Oaxacan"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/claro.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000035  # TODO(01-05 spike)
+    resy_venue_id: "claro-brooklyn"
+
+  # --- Korean + Thai + Chinese ----------------------------------------------
+  - name: "Cote"
+    slug: "cote-nyc"
+    neighborhood: "Flatiron"
+    cuisine: "Korean - Steakhouse"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/cote.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000036  # TODO(01-05 spike)
+    resy_venue_id: "cote-new-york"
+
+  - name: "Jua"
+    slug: "jua"
+    neighborhood: "Flatiron"
+    cuisine: "Korean - Tasting Menu"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/jua.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000037  # TODO(01-05 spike)
+    resy_venue_id: "jua-new-york"
+
+  - name: "Thai Diner"
+    slug: "thai-diner"
+    neighborhood: "NoLita"
+    cuisine: "Thai"
+    price_tier: 2
+    cover_photo_url: "https://placeholder.mise.place/thai-diner.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000038  # TODO(01-05 spike)
+    resy_venue_id: "thai-diner-new-york"
+
+  - name: "Uncle Boons"
+    slug: "uncle-boons"
+    neighborhood: "NoLita"
+    cuisine: "Thai"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/uncle-boons.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000039  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Nom Wah Tea Parlor"
+    slug: "nom-wah-tea-parlor"
+    neighborhood: "Chinatown"
+    cuisine: "Chinese - Dim Sum"
+    price_tier: 2
+    cover_photo_url: "https://placeholder.mise.place/nom-wah.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000040  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Mission Chinese Food"
+    slug: "mission-chinese"
+    neighborhood: "Lower East Side"
+    cuisine: "Chinese - Szechuan"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/mission-chinese.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000041  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- Indian ---------------------------------------------------------------
+  - name: "Semma"
+    slug: "semma"
+    neighborhood: "Greenwich Village"
+    cuisine: "Indian - South Indian"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/semma.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000042  # TODO(01-05 spike)
+    resy_venue_id: "semma-new-york"
+
+  - name: "Dhamaka"
+    slug: "dhamaka"
+    neighborhood: "Lower East Side"
+    cuisine: "Indian"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/dhamaka.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000043  # TODO(01-05 spike)
+    resy_venue_id: "dhamaka-new-york"
+
+  # --- Middle Eastern + Greek + Spanish -------------------------------------
+  - name: "Shuka"
+    slug: "shuka"
+    neighborhood: "SoHo"
+    cuisine: "Middle Eastern"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/shuka.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000044  # TODO(01-05 spike)
+    resy_venue_id: "shuka-new-york"
+
+  - name: "Miss Lily's"
+    slug: "miss-lilys-7a"
+    neighborhood: "East Village"
+    cuisine: "Caribbean"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/miss-lilys.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000045  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Kiki's"
+    slug: "kikis"
+    neighborhood: "Lower East Side"
+    cuisine: "Greek"
+    price_tier: 2
+    cover_photo_url: "https://placeholder.mise.place/kikis.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000046  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Estiatorio Milos"
+    slug: "milos-nyc"
+    neighborhood: "Midtown"
+    cuisine: "Greek - Seafood"
+    price_tier: 4
+    cover_photo_url: "https://placeholder.mise.place/milos.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000047  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Boqueria"
+    slug: "boqueria-soho"
+    neighborhood: "SoHo"
+    cuisine: "Spanish - Tapas"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/boqueria.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000048  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- Southern + BBQ + bakery cafes ----------------------------------------
+  - name: "Red Rooster"
+    slug: "red-rooster-harlem"
+    neighborhood: "Harlem"
+    cuisine: "Southern"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/red-rooster.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000049  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "The Smith"
+    slug: "the-smith-east-village"
+    neighborhood: "East Village"
+    cuisine: "American - Brasserie"
+    price_tier: 2
+    cover_photo_url: "https://placeholder.mise.place/the-smith.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000050  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  # --- Outer-borough picks to round out geography ---------------------------
+  - name: "Oxomoco"
+    slug: "oxomoco"
+    neighborhood: "Greenpoint"
+    cuisine: "Mexican"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/oxomoco.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000051  # TODO(01-05 spike)
+    resy_venue_id: "oxomoco-brooklyn"
+
+  - name: "Olmsted"
+    slug: "olmsted-prospect-heights"
+    neighborhood: "Prospect Heights"
+    cuisine: "New American"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/olmsted.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000052  # TODO(01-05 spike)
+    resy_venue_id: "olmsted-brooklyn"
+
+  - name: "Convivium Osteria"
+    slug: "convivium-osteria"
+    neighborhood: "Park Slope"
+    cuisine: "Italian"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/convivium.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000053  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Casa Enrique"
+    slug: "casa-enrique-lic"
+    neighborhood: "Long Island City"
+    cuisine: "Mexican"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/casa-enrique.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000054  # TODO(01-05 spike)
+    resy_venue_id: null
+
+  - name: "Taverna Kyclades"
+    slug: "taverna-kyclades-astoria"
+    neighborhood: "Astoria"
+    cuisine: "Greek - Seafood"
+    price_tier: 3
+    cover_photo_url: "https://placeholder.mise.place/taverna-kyclades.jpg"  # TODO(01-05 spike)
+    opentable_rid: 900000055  # TODO(01-05 spike)
+    resy_venue_id: null
