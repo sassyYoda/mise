@@ -101,9 +101,9 @@ from typing import Any
 
 import asyncpg
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://mise:mise@localhost:5432/mise"
+DATABASE_URL_ASYNC = os.getenv(
+    "DATABASE_URL_ASYNC",
+    "postgresql+asyncpg://mise:mise@localhost:5432/mise",
 )
 
 # PERF-02 success threshold
@@ -129,7 +129,7 @@ async def check() -> int:
     Run PERF-02 check. Returns exit code (0=pass, 1=fail, 2=insufficient data).
     """
     # Strip asyncpg prefix if set; asyncpg uses postgresql:// not postgresql+asyncpg://
-    url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    url = DATABASE_URL_ASYNC.replace("postgresql+asyncpg://", "postgresql://")
 
     conn = await asyncpg.connect(url)
     try:
@@ -287,28 +287,38 @@ is roughly 400 `availability.raw` events per day (50 restaurants × ~8 polls/hou
   </done>
 </task>
 
-<task id="01-06-T3" type="auto">
+<task id="01-06-T3" type="checkpoint:human-action">
   <name>Task 3: Launch 24h observation run and record t0 baseline</name>
   <files>docs/runbooks/perf02-24h-log.md</files>
   <read_first>
     docs/runbooks/perf02-24h-log.md (template from Plan 01),
+    scripts/seed/restaurants.yml (must have >=50 entries — Plan 03 output),
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-CONTEXT.md (D-11)
   </read_first>
   <action>
-This task runs autonomously — it starts the poller and records the initial baseline.
+This task is a human-action checkpoint — it starts a background poller (detached tmux/screen) and records the initial baseline into Markdown, which cannot be done by an automated `auto`-type task.
 
-Verify infra is running and seeded:
+**Precondition guard — abort immediately if any of these fail:**
 ```bash
+# 1. Seed YAML must have >=50 entries before 24h run (SC3 gate).
+COUNT=$(uv run python -c "import yaml; print(len(yaml.safe_load(open('scripts/seed/restaurants.yml'))['restaurants']))")
+if [ "$COUNT" -lt 50 ]; then
+  echo "ABORT: scripts/seed/restaurants.yml has $COUNT entries (need >=50 for PERF-02)"; exit 1
+fi
+
+# 2. DB must report >=50 seeded restaurants.
+make verify-seed || { echo "ABORT: make verify-seed failed — run make seed first"; exit 1; }
+
+# 3. Infra must be up.
 docker compose -f ops/docker-compose.yml ps   # all services healthy
 make topics                                    # idempotent — ensures topics exist
 make migrate                                   # idempotent — migrations applied
-make seed                                      # idempotent — 50 restaurants seeded
 ```
 
-Start the poller in a background process or detached tmux/screen session:
+Start the poller in a detached tmux/screen session (NOT `&` — a 24h run must survive the shell session closing):
 ```bash
-make poll &
-POLLER_PID=$!
+tmux new-session -d -s mise-poll 'make poll 2>&1 | tee logs/poll-$(date +%Y%m%dT%H%M%SZ).log'
+POLLER_PID=$(pgrep -f "services.poller" | head -1)
 echo "Poller PID: $POLLER_PID"
 ```
 
@@ -329,12 +339,14 @@ Update docs/runbooks/perf02-24h-log.md with actual values:
 
 Note: The 24h clock starts when this task completes. The wall-clock checkpoint in Task 4 runs after 24h have elapsed.
   </action>
-  <verify>
-    <automated>grep -q "t0_timestamp\|Start time" docs/runbooks/perf02-24h-log.md && python3 -c "import ast; ast.parse(open('scripts/check_poll_success.py').read()); print('check_poll_success parses OK')"</automated>
-  </verify>
-  <done>
-    Poller process started (make poll running); docs/runbooks/perf02-24h-log.md has t0 filled in (not the template placeholder) with actual timestamp, PID, and FD count; 24h observation clock running
-  </done>
+  <acceptance_criteria>
+    - `uv run python -c "import yaml; assert len(yaml.safe_load(open('scripts/seed/restaurants.yml'))['restaurants']) >= 50"` exits 0
+    - `make verify-seed` exits 0 before poller is started
+    - `pgrep -f "services.poller"` returns a PID (poller process running)
+    - `grep -E "t0_timestamp: 20[0-9]{2}-[0-9]{2}-[0-9]{2}T" docs/runbooks/perf02-24h-log.md` matches (real ISO-8601 timestamp, not template placeholder)
+    - `grep -E "Poller PID at t0: [0-9]+" docs/runbooks/perf02-24h-log.md` matches (real PID)
+    - `grep -E "FD count at t0: [0-9]+" docs/runbooks/perf02-24h-log.md` matches (real FD count)
+  </acceptance_criteria>
 </task>
 
 <task id="01-06-T4" type="checkpoint:human-action">

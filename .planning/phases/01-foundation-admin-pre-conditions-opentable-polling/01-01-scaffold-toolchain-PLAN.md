@@ -12,6 +12,7 @@ files_modified:
   - .gitignore
   - .ruff.toml
   - CONTRIBUTING.md
+  - .github/workflows/lint.yml
   - shared/__init__.py
   - shared/events.py
   - shared/redis_keys.py
@@ -21,6 +22,7 @@ files_modified:
   - tests/unit/test_redis_keys.py
   - tests/unit/test_events_schema.py
   - tests/unit/test_telemetry_redaction.py
+  - tests/unit/test_http_client_singleton.py
   - tests/integration/__init__.py
   - tests/integration/test_poller_smoke.py
   - tests/integration/test_seed_idempotency.py
@@ -191,52 +193,73 @@ build/
 htmlcov/
 ```
 
-Create `.env.example` listing all Named Symbol env vars with placeholder values:
+Create `.env.example` listing **every** Named Symbol env var from RESEARCH.md §22 (lines 938-962). Placeholder values only — never real secrets:
 ```
+# Runtime
+ENV=dev
+LOG_LEVEL=INFO
+
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS=localhost:9094
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
-# Database
-DATABASE_URL=postgresql+asyncpg://mise:mise@localhost:5432/mise
+# Postgres (docker-compose credentials + both driver URLs)
+POSTGRES_USER=mise
+POSTGRES_PASSWORD=mise
+POSTGRES_DB=mise
+DATABASE_URL_ASYNC=postgresql+asyncpg://mise:mise@localhost:5432/mise
 DATABASE_URL_SYNC=postgresql+psycopg://mise:mise@localhost:5432/mise
 
-# Twilio
+# Twilio (10DLC + toll-free backup)
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_MESSAGING_SERVICE_SID=MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_FROM_NUMBER=+15551234567
+TWILIO_TOLLFREE_FROM_NUMBER=+18005551234
 
-# Resy
-RESY_ACCOUNTS_JSON=[{"email":"example@email.com","cookies":{}}]
+# Resy (>=3 pre-authenticated accounts — D-24, FOUND-06)
+# Two-phase secret handling (see docs/runbooks/resy-cookie-capture.md):
+#   Phase 1 (bootstrap): user enters raw email/password below ONLY to log in once in a
+#                        supervised browser session and capture the post-login cookies.
+#   Phase 2 (runtime):   captured cookies are serialized into RESY_ACCOUNTS_JSON (the
+#                        canonical runtime secret — never stores passwords). Playwright
+#                        loads cookies from RESY_ACCOUNTS_JSON into browser context
+#                        memory only; Pitfall 8 forbids DB persistence.
+RESY_ACCOUNT_1_EMAIL=account1@example.com
+RESY_ACCOUNT_1_PASSWORD=replace_me
+RESY_ACCOUNT_2_EMAIL=account2@example.com
+RESY_ACCOUNT_2_PASSWORD=replace_me
+RESY_ACCOUNT_3_EMAIL=account3@example.com
+RESY_ACCOUNT_3_PASSWORD=replace_me
+RESY_ACCOUNTS_JSON=[{"email":"account1@example.com","cookies":{}}]
 
-# VAPID
+# VAPID (Web Push)
 VAPID_PUBLIC_KEY=your_vapid_public_key_here
 VAPID_PRIVATE_KEY=your_vapid_private_key_here
+VAPID_SUBJECT=mailto:admin@mise.place
 
-# HMAC
-HMAC_SECRET_V1=your_32_byte_hex_secret_here
+# HMAC (admin management endpoints — D-26)
+HMAC_MGMT_SECRET_V1=your_32_byte_hex_secret_here
 
 # GCP
 GCP_PROJECT_ID=mise-en-place-prod
-
-# Runtime
-ENV=dev
 ```
   </action>
   <verify>
-    <automated>uv run python -c "import tomllib; data=tomllib.loads(open('pyproject.toml').read()); assert 'aiokafka==0.13.0' in str(data['project']['dependencies']); assert 'asyncio_mode' in str(data['tool']['pytest']['ini_options']); print('pyproject.toml OK')" && grep -q "^\.env$" .gitignore && grep -q "KAFKA_BOOTSTRAP_SERVERS" .env.example</automated>
+    <automated>uv run python -c "import tomllib; data=tomllib.loads(open('pyproject.toml').read()); assert 'aiokafka==0.13.0' in str(data['project']['dependencies']); assert 'asyncio_mode' in str(data['tool']['pytest']['ini_options']); print('pyproject.toml OK')" && grep -q "^\.env$" .gitignore && for var in LOG_LEVEL KAFKA_BOOTSTRAP_SERVERS REDIS_URL POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL_ASYNC DATABASE_URL_SYNC TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_MESSAGING_SERVICE_SID TWILIO_FROM_NUMBER TWILIO_TOLLFREE_FROM_NUMBER RESY_ACCOUNT_1_EMAIL RESY_ACCOUNT_1_PASSWORD RESY_ACCOUNT_2_EMAIL RESY_ACCOUNT_2_PASSWORD RESY_ACCOUNT_3_EMAIL RESY_ACCOUNT_3_PASSWORD RESY_ACCOUNTS_JSON VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT HMAC_MGMT_SECRET_V1 GCP_PROJECT_ID ENV; do grep -q "^${var}=" .env.example || { echo "MISSING: ${var}"; exit 1; }; done</automated>
   </verify>
-  <done>pyproject.toml has all pinned deps + pytest config; uv.lock generated; .gitignore has .env entry; .env.example has all 13 Named Symbol env vars</done>
+  <done>pyproject.toml has all pinned deps + pytest config; uv.lock generated; .gitignore has .env entry; .env.example has every RESEARCH.md §22 Named Symbol env var (no aliases, no omissions): ENV, LOG_LEVEL, KAFKA_BOOTSTRAP_SERVERS, REDIS_URL, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DATABASE_URL_ASYNC, DATABASE_URL_SYNC, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID, TWILIO_FROM_NUMBER, TWILIO_TOLLFREE_FROM_NUMBER, RESY_ACCOUNT_[1-3]_EMAIL/PASSWORD, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, HMAC_MGMT_SECRET_V1, GCP_PROJECT_ID</done>
 </task>
 
 <task id="01-01-T2" type="auto">
-  <name>Task 2: Makefile, ruff config, mypy config, CONTRIBUTING.md lint bans</name>
+  <name>Task 2: Makefile, ruff config, mypy config, CONTRIBUTING.md lint bans, CI lint workflow</name>
   <files>
     Makefile,
     .ruff.toml,
-    CONTRIBUTING.md
+    CONTRIBUTING.md,
+    .github/workflows/lint.yml
   </files>
   <read_first>
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-CONTEXT.md (D-10, D-35),
@@ -338,11 +361,41 @@ NEVER run `alembic revision --autogenerate` after a hypertable exists. Always ha
 
 NEVER use `SETNX` + `EXPIRE` as two separate commands. Always use the single atomic `SET key value NX EX ttl` form. The codebase has zero occurrences of `SETNX` — keep it that way.
 ```
+
+Create `.github/workflows/lint.yml` to enforce Pitfall 16 async hygiene in CI (D-35 CI gate):
+```yaml
+name: lint
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - name: ruff check
+        run: uv run ruff check .
+      - name: mypy
+        run: uv run mypy shared/ services/
+      - name: ban_requests_import
+        run: |
+          ! grep -rn "^import requests\|^from requests " services/ shared/
+      - name: ban_time_sleep_in_async
+        run: |
+          ! grep -rn "time\.sleep(" services/ shared/
+      - name: ban_sync_redis_import
+        run: |
+          ! grep -rEn "^import redis$|^from redis import " services/ shared/
+```
   </action>
   <verify>
-    <automated>make help 2>&1 | grep -E "verify-perf02|test-integration|smoke|verify-seed" | wc -l | grep -q "^4" && grep -q "ASYNC" .ruff.toml && grep -q "SETNX" CONTRIBUTING.md</automated>
+    <automated>make help 2>&1 | grep -E "verify-perf02|test-integration|smoke|verify-seed" | wc -l | grep -q "^4" && grep -q "ASYNC" .ruff.toml && grep -q "SETNX" CONTRIBUTING.md && test -f .github/workflows/lint.yml && grep -q "ban_requests_import" .github/workflows/lint.yml</automated>
   </verify>
-  <done>make help shows all 14 required targets; .ruff.toml has ASYNC lint group; CONTRIBUTING.md documents the three banned patterns with grep enforcement</done>
+  <done>make help shows all 14 required targets; .ruff.toml has ASYNC lint group; CONTRIBUTING.md documents the three banned patterns with grep enforcement; .github/workflows/lint.yml enforces the same three bans on every PR (D-35)</done>
 </task>
 
 <task id="01-01-T3" type="auto">
@@ -365,7 +418,7 @@ Create `shared/events.py` as a scaffold with correct imports — bodies are stub
 """
 Pydantic v2 Kafka message schemas.
 Single source of truth for all Kafka message contracts (D-06).
-Named symbols: AvailabilityRawEvent, PollsCompletedEvent
+Named symbols: AvailabilityRaw, PollCompleted
 """
 from __future__ import annotations
 from typing import Any, Literal
@@ -374,7 +427,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
-class AvailabilityRawEvent(BaseModel):
+class AvailabilityRaw(BaseModel):
     """Emitted to availability.raw for each completed OpenTable or Resy poll."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -383,19 +436,20 @@ class AvailabilityRawEvent(BaseModel):
     restaurant_id: int
     polled_at_epoch_ms: int
     raw_response: dict[str, Any]
+    request_params: dict[str, Any]
 
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
 
 
-class PollsCompletedEvent(BaseModel):
+class PollCompleted(BaseModel):
     """Emitted to polls.completed after each poll attempt."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     poll_id: UUID
     source: Literal["opentable", "resy"]
     restaurant_id: int
-    completed_at_epoch_ms: int
+    polled_at_epoch_ms: int
     status: Literal["success", "error", "timeout"]
     latency_ms: int
     http_status: int | None = None
@@ -505,12 +559,12 @@ def _redact_secrets(logger: Any, method: str, event_dict: dict[str, Any]) -> dic
     _REDACTED = "[REDACTED]"
     _SECRET_KEYS = {
         "TWILIO_AUTH_TOKEN",
-        "HMAC_SECRET_V1",
+        "HMAC_MGMT_SECRET_V1",
         "VAPID_PRIVATE_KEY",
         "RESY_ACCOUNTS_JSON",
     }
-    for k in _SECRET_KEYS:
-        if k in event_dict:
+    for k in list(event_dict.keys()):
+        if k in _SECRET_KEYS or k.startswith("RESY_ACCOUNT_") and k.endswith("_PASSWORD"):
             event_dict[k] = _REDACTED
     return event_dict
 
@@ -558,9 +612,9 @@ def get_logger(name: str) -> structlog.BoundLogger:
 ```
   </action>
   <verify>
-    <automated>uv run python -c "from shared.events import AvailabilityRawEvent, PollsCompletedEvent; from shared.redis_keys import SCHED_POLLS, SCHED_POLLS_INFLIGHT, job, set_nx_ex; from shared.telemetry import get_logger, configure_logging; print('shared imports OK')"</automated>
+    <automated>uv run python -c "from shared.events import AvailabilityRaw, PollCompleted; from shared.redis_keys import SCHED_POLLS, SCHED_POLLS_INFLIGHT, job, set_nx_ex; from shared.telemetry import get_logger, configure_logging; print('shared imports OK')"</automated>
   </verify>
-  <done>All four shared/ files importable; AvailabilityRawEvent and PollsCompletedEvent have model_config=ConfigDict(frozen=True, extra='forbid') and to_bytes(); SCHED_POLLS='sched:polls', SCHED_POLLS_INFLIGHT='sched:polls:inflight'; set_nx_ex uses r.set(key, value, nx=True, ex=ttl_seconds) single call; telemetry._redact_secrets strips TWILIO_AUTH_TOKEN, HMAC_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON</done>
+  <done>All four shared/ files importable; AvailabilityRaw and PollCompleted have model_config=ConfigDict(frozen=True, extra='forbid') and to_bytes(); SCHED_POLLS='sched:polls', SCHED_POLLS_INFLIGHT='sched:polls:inflight'; set_nx_ex uses r.set(key, value, nx=True, ex=ttl_seconds) single call; telemetry._redact_secrets strips TWILIO_AUTH_TOKEN, HMAC_MGMT_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON</done>
 </task>
 
 <task id="01-01-T4" type="auto">
@@ -571,6 +625,7 @@ def get_logger(name: str) -> structlog.BoundLogger:
     tests/unit/test_redis_keys.py,
     tests/unit/test_events_schema.py,
     tests/unit/test_telemetry_redaction.py,
+    tests/unit/test_http_client_singleton.py,
     tests/integration/__init__.py,
     tests/integration/test_poller_smoke.py,
     tests/integration/test_seed_idempotency.py,
@@ -677,16 +732,17 @@ Create `tests/unit/test_events_schema.py`:
 """Unit tests for shared.events Pydantic models."""
 import pytest
 from uuid import uuid4
-from shared.events import AvailabilityRawEvent, PollsCompletedEvent
+from shared.events import AvailabilityRaw, PollCompleted
 
 
 def test_availability_raw_event_to_bytes():
-    evt = AvailabilityRawEvent(
+    evt = AvailabilityRaw(
         poll_id=uuid4(),
         source="opentable",
         restaurant_id=42,
         polled_at_epoch_ms=1_000_000,
         raw_response={"slots": []},
+        request_params={"rid": 42, "date_range_days": 7, "party_sizes": [2, 4]},
     )
     b = evt.to_bytes()
     assert isinstance(b, bytes)
@@ -694,12 +750,13 @@ def test_availability_raw_event_to_bytes():
 
 
 def test_availability_raw_event_frozen():
-    evt = AvailabilityRawEvent(
+    evt = AvailabilityRaw(
         poll_id=uuid4(),
         source="opentable",
         restaurant_id=42,
         polled_at_epoch_ms=1_000_000,
         raw_response={},
+        request_params={},
     )
     with pytest.raises(Exception):
         evt.restaurant_id = 99  # type: ignore[misc]
@@ -707,11 +764,11 @@ def test_availability_raw_event_frozen():
 
 def test_polls_completed_event_extra_fields_forbidden():
     with pytest.raises(Exception):
-        PollsCompletedEvent(
+        PollCompleted(
             poll_id=uuid4(),
             source="opentable",
             restaurant_id=42,
-            completed_at_epoch_ms=1_000_000,
+            polled_at_epoch_ms=1_000_000,
             status="success",
             latency_ms=100,
             unknown_field="oops",
@@ -719,11 +776,11 @@ def test_polls_completed_event_extra_fields_forbidden():
 
 
 def test_polls_completed_event_optional_fields():
-    evt = PollsCompletedEvent(
+    evt = PollCompleted(
         poll_id=uuid4(),
         source="resy",
         restaurant_id=7,
-        completed_at_epoch_ms=1_000_000,
+        polled_at_epoch_ms=1_000_000,
         status="error",
         latency_ms=500,
         http_status=503,
@@ -747,9 +804,9 @@ def test_redacts_twilio_auth_token():
 
 
 def test_redacts_hmac_secret():
-    event = {"event": "test", "HMAC_SECRET_V1": "deadbeef" * 4}
+    event = {"event": "test", "HMAC_MGMT_SECRET_V1": "deadbeef" * 4}
     result = _redact_secrets(None, "info", event)
-    assert result["HMAC_SECRET_V1"] == "[REDACTED]"
+    assert result["HMAC_MGMT_SECRET_V1"] == "[REDACTED]"
 
 
 def test_redacts_vapid_private_key():
@@ -771,6 +828,25 @@ def test_leaves_non_secret_fields_alone():
     assert result["status"] == "success"
 ```
 
+Create `tests/unit/test_http_client_singleton.py` (Pitfall 9 — shared httpx.AsyncClient per worker). The real assertions are filled in Plan 05 once `shared/http_client.py` ships; this Wave-0 stub only needs to collect cleanly.
+
+```python
+"""Unit tests for shared.http_client singleton (Pitfall 9). Filled by Plan 05."""
+import pytest
+
+
+@pytest.mark.skip(reason="Wave-0 stub — shared.http_client singleton implemented in Plan 05")
+def test_get_async_client_returns_singleton():
+    """Subsequent calls to get_async_client() must return the same httpx.AsyncClient instance."""
+    pass
+
+
+@pytest.mark.skip(reason="Wave-0 stub — shared.http_client singleton implemented in Plan 05")
+def test_client_limits_configured():
+    """Shared client exposes Limits(max_connections=100, max_keepalive_connections=20)."""
+    pass
+```
+
 Create Wave-0 integration test stubs. Each file must import, define a stub test function marked `pytest.mark.skip(reason="Wave-0 stub — implemented in Plan 0X")`, so `pytest tests/unit -x -q` runs without needing infra.
 
 Create `tests/integration/test_poller_smoke.py`:
@@ -784,7 +860,7 @@ async def test_end_to_end_emit_within_60s(kafka_container, redis_container, time
     """
     Boot poller against testcontainers. After seed + one scheduler cycle,
     assert one message appears on availability.raw within 60s with correct
-    Kafka key '{source}:{restaurant_id}' and valid AvailabilityRawEvent JSON.
+    Kafka key '{source}:{restaurant_id}' and valid AvailabilityRaw JSON.
     Also assert one row in poll_log with status='success' and latency_ms > 0.
     """
     raise NotImplementedError
@@ -800,7 +876,7 @@ import pytest
 async def test_seed_populates_all_fields_and_zset(redis_container, timescale_container):
     """
     Run seed_restaurants.py against testcontainers Postgres + Redis.
-    Assert: COUNT(*) FROM restaurants WHERE opentable_rid IS NOT NULL
+    Assert: COUNT(*) FROM restaurants WHERE source='opentable' AND platform_id IS NOT NULL
               AND neighborhood IS NOT NULL AND cuisine IS NOT NULL
               AND price_tier IS NOT NULL AND cover_photo_url IS NOT NULL >= 50.
     Assert: ZCARD sched:polls >= 50.
@@ -993,8 +1069,8 @@ Create `docs/admin-evidence/.gitkeep` as an empty file.
 
 | Threat ID | Category | Component | Disposition | Mitigation Plan |
 |-----------|----------|-----------|-------------|-----------------|
-| T-01 | Information Disclosure | .env / secrets | mitigate | `.env` listed in `.gitignore` day 1 (per D-09); `.env.example` ships placeholders only — no real values; CI step runs `grep -rn "TWILIO_AUTH_TOKEN\|HMAC_SECRET_V1\|VAPID_PRIVATE_KEY" .env.example` and fails if non-placeholder values appear |
-| T-02 | Information Disclosure | structlog / log output | mitigate | `_redact_secrets` processor wired in `shared/telemetry.py` processor chain (this plan); strips `TWILIO_AUTH_TOKEN`, `HMAC_SECRET_V1`, `VAPID_PRIVATE_KEY`, `RESY_ACCOUNTS_JSON` from every log event dict; unit test in `tests/unit/test_telemetry_redaction.py` verifies all four keys are redacted |
+| T-01 | Information Disclosure | .env / secrets | mitigate | `.env` listed in `.gitignore` day 1 (per D-09); `.env.example` ships placeholders only — no real values; CI step runs `grep -rn "TWILIO_AUTH_TOKEN\|HMAC_MGMT_SECRET_V1\|VAPID_PRIVATE_KEY" .env.example` and fails if non-placeholder values appear |
+| T-02 | Information Disclosure | structlog / log output | mitigate | `_redact_secrets` processor wired in `shared/telemetry.py` processor chain (this plan); strips `TWILIO_AUTH_TOKEN`, `HMAC_MGMT_SECRET_V1`, `VAPID_PRIVATE_KEY`, `RESY_ACCOUNTS_JSON` from every log event dict; unit test in `tests/unit/test_telemetry_redaction.py` verifies all four keys are redacted |
 </threat_model>
 
 <verification>
@@ -1002,7 +1078,7 @@ After all four tasks complete:
 
 ```bash
 # 1. All shared modules import cleanly
-uv run python -c "from shared.events import AvailabilityRawEvent, PollsCompletedEvent; from shared.redis_keys import SCHED_POLLS, SCHED_POLLS_INFLIGHT, set_nx_ex; from shared.telemetry import get_logger; print('OK')"
+uv run python -c "from shared.events import AvailabilityRaw, PollCompleted; from shared.redis_keys import SCHED_POLLS, SCHED_POLLS_INFLIGHT, set_nx_ex; from shared.telemetry import get_logger; print('OK')"
 
 # 2. Unit tests pass
 uv run pytest tests/unit -v
@@ -1020,7 +1096,7 @@ grep -rn "time\.sleep(" shared/ services/ 2>/dev/null | wc -l | grep -q "^0"
 </verification>
 
 <success_criteria>
-- `uv run python -c "from shared.events import AvailabilityRawEvent"` exits 0
+- `uv run python -c "from shared.events import AvailabilityRaw"` exits 0
 - `uv run pytest tests/unit -x -q` produces 0 failures (skips are OK)
 - `make help` lists all 14 targets including `verify-perf02`, `smoke`, `verify-seed`, `topics`
 - `.env` is in `.gitignore`; `.env.example` has all 13 Named Symbol env vars as placeholders

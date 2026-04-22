@@ -118,6 +118,7 @@ services:
       KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_CFG_MIN_INSYNC_REPLICAS: 1
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
     volumes:
       - kafka-data:/bitnami/kafka
@@ -426,25 +427,36 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "restaurants",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+        sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+        sa.Column("source", sa.Text, nullable=False),          # 'opentable' | 'resy'
+        sa.Column("platform_id", sa.Text, nullable=False),     # stringified OT rid or Resy venue_id
         sa.Column("name", sa.Text, nullable=False),
         sa.Column("slug", sa.Text, nullable=False, unique=True),
         sa.Column("neighborhood", sa.Text, nullable=False),
         sa.Column("cuisine", sa.Text, nullable=False),
-        sa.Column("price_tier", sa.Integer, nullable=False),  # 1-4
+        sa.Column(
+            "price_tier",
+            sa.Integer,
+            sa.CheckConstraint("price_tier BETWEEN 1 AND 4", name="ck_restaurants_price_tier"),
+            nullable=False,
+        ),
         sa.Column("cover_photo_url", sa.Text, nullable=False),
-        sa.Column("opentable_rid", sa.Integer, nullable=True),
-        sa.Column("resy_venue_id", sa.Text, nullable=True),
         sa.Column("date_range_days", sa.Integer, server_default="7", nullable=False),
-        sa.Column("party_sizes", sa.Text, server_default="2,4", nullable=False),
+        sa.Column(
+            "party_sizes",
+            sa.ARRAY(sa.Integer),
+            server_default=sa.text("'{2,4}'::integer[]"),
+            nullable=False,
+        ),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("source", "platform_id", name="uq_restaurants_source_platform_id"),
     )
     op.create_index("ix_restaurants_slug", "restaurants", ["slug"], unique=True)
-    op.create_index("ix_restaurants_opentable_rid", "restaurants", ["opentable_rid"])
+    op.create_index("ix_restaurants_source_platform_id", "restaurants", ["source", "platform_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_restaurants_opentable_rid", table_name="restaurants")
+    op.drop_index("ix_restaurants_source_platform_id", table_name="restaurants")
     op.drop_index("ix_restaurants_slug", table_name="restaurants")
     op.drop_table("restaurants")
 ```
@@ -466,7 +478,7 @@ def upgrade() -> None:
         "watchlist_entries",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("restaurant_id", sa.Integer, sa.ForeignKey("restaurants.id"), nullable=False),
+        sa.Column("restaurant_id", sa.BigInteger, sa.ForeignKey("restaurants.id"), nullable=False),
         sa.Column("party_size", sa.Integer, nullable=False),
         sa.Column("date_from", sa.Date, nullable=False),
         sa.Column("date_to", sa.Date, nullable=False),
@@ -542,9 +554,9 @@ depends_on = None
 def upgrade() -> None:
     # Step 1: create plain Postgres table
     op.create_table(
-        "availability_events",
+        "availability_events",   # restaurant_id is BigInteger to match restaurants.id
         sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
-        sa.Column("restaurant_id", sa.Integer, nullable=False),
+        sa.Column("restaurant_id", sa.BigInteger, nullable=False),
         sa.Column("source", sa.Text, nullable=False),
         sa.Column("date", sa.Date, nullable=False),
         sa.Column("time_slot", sa.Time, nullable=True),
@@ -588,7 +600,7 @@ def upgrade() -> None:
     op.create_table(
         "poll_log",
         sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
-        sa.Column("restaurant_id", sa.Integer, nullable=False),
+        sa.Column("restaurant_id", sa.BigInteger, nullable=False),   # matches restaurants.id (BigInteger)
         sa.Column("source", sa.Text, nullable=False),
         sa.Column("status", sa.Text, nullable=False),   # 'success' | 'error' | 'timeout'
         sa.Column("latency_ms", sa.Integer, nullable=True),

@@ -21,17 +21,17 @@ requirements_addressed:
 
 must_haves:
   truths:
-    - "AvailabilityRawEvent and PollsCompletedEvent are fully implemented Pydantic v2 models with to_bytes() and model_config=ConfigDict(frozen=True, extra='forbid')"
+    - "AvailabilityRaw and PollCompleted are fully implemented Pydantic v2 models with to_bytes() and model_config=ConfigDict(frozen=True, extra='forbid')"
     - "set_nx_ex uses a single r.set(key, value, nx=True, ex=ttl_seconds) call — confirmed by unit test"
     - "shared/db.py exports get_engine() and get_async_session() using asyncpg driver; all 6 table models match migration column names exactly"
-    - "configure_logging() redacts TWILIO_AUTH_TOKEN, HMAC_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from all log events — confirmed by unit test"
+    - "configure_logging() redacts TWILIO_AUTH_TOKEN, HMAC_MGMT_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from all log events — confirmed by unit test"
     - "make_producer() returns AIOKafkaProducer with acks='all', enable_idempotence=True, compression_type='gzip'"
     - "Three Lua scripts (CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA) are loadable and function correctly against a live Redis — confirmed by integration test"
     - "scripts/seed_restaurants.py runs idempotently: first run inserts >= 50 rows; second run produces no duplicate rows; each restaurant is added to sched:polls ZSET"
   artifacts:
     - path: shared/events.py
-      provides: "AvailabilityRawEvent, PollsCompletedEvent fully implemented"
-      exports: ["AvailabilityRawEvent", "PollsCompletedEvent"]
+      provides: "AvailabilityRaw, PollCompleted fully implemented"
+      exports: ["AvailabilityRaw", "PollCompleted"]
     - path: shared/db.py
       provides: "SQLAlchemy 2.0 async models + session factory"
       exports: ["get_engine", "get_async_session", "Base"]
@@ -47,8 +47,8 @@ must_haves:
   key_links:
     - from: shared/events.py
       to: "services/poller/publisher.py"
-      via: "AvailabilityRawEvent.to_bytes() used as Kafka message value"
-      pattern: "AvailabilityRawEvent"
+      via: "AvailabilityRaw.to_bytes() used as Kafka message value"
+      pattern: "AvailabilityRaw"
     - from: shared/redis_keys.py
       to: "shared/scheduler/lua.py"
       via: "SCHED_POLLS and SCHED_POLLS_INFLIGHT used as KEYS args"
@@ -102,8 +102,8 @@ Output: Fully implemented shared/ modules; seed script that populates 50 restaur
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-RESEARCH.md (Named Symbols section)
   </read_first>
   <behavior>
-    - AvailabilityRawEvent.to_bytes() returns self.model_dump_json().encode('utf-8')
-    - PollsCompletedEvent.to_bytes() returns self.model_dump_json().encode('utf-8')
+    - AvailabilityRaw.to_bytes() returns self.model_dump_json().encode('utf-8')
+    - PollCompleted.to_bytes() returns self.model_dump_json().encode('utf-8')
     - Both models are frozen=True, extra='forbid' — assigning unknown fields raises ValidationError
     - set_nx_ex calls r.set(key, value, nx=True, ex=ttl_seconds) exactly once — never SETNX+EXPIRE
     - set_nx_ex returns True when key was set; False when key already existed (Redis returns None on NX miss)
@@ -114,8 +114,8 @@ Output: Fully implemented shared/ modules; seed script that populates 50 restaur
 The stub implementations in Plan 01 are already functionally complete for events.py and redis_keys.py. Review the stubs and verify they satisfy all behaviors in the behavior block. If they do, update the unit tests to remove the `pytest.mark.skip` and make them fully runnable assertions (the test bodies were already written in Plan 01 stubs — just remove the skip decorator).
 
 For shared/events.py: no changes needed if the Plan 01 stub correctly implements:
-- AvailabilityRawEvent with fields: poll_id: UUID, source: Literal["opentable","resy"], restaurant_id: int, polled_at_epoch_ms: int, raw_response: dict[str, Any]
-- PollsCompletedEvent with fields: poll_id: UUID, source: Literal["opentable","resy"], restaurant_id: int, completed_at_epoch_ms: int, status: Literal["success","error","timeout"], latency_ms: int, http_status: int | None, error: str | None
+- AvailabilityRaw with fields: poll_id: UUID, source: Literal["opentable","resy"], restaurant_id: int, polled_at_epoch_ms: int, raw_response: dict[str, Any], request_params: dict[str, Any]
+- PollCompleted with fields: poll_id: UUID, source: Literal["opentable","resy"], restaurant_id: int, polled_at_epoch_ms: int, status: Literal["success","error","timeout"], latency_ms: int, http_status: int | None, error: str | None
 - Both with model_config = ConfigDict(frozen=True, extra="forbid") and to_bytes() -> bytes
 
 For shared/redis_keys.py: no changes needed if the Plan 01 stub correctly implements:
@@ -171,9 +171,9 @@ def test_constants_values():
   </read_first>
   <behavior>
     - configure_logging(env="prod") uses JSONRenderer; configure_logging(env="dev") uses ConsoleRenderer(colors=True)
-    - _redact_secrets strips TWILIO_AUTH_TOKEN, HMAC_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from log event dict, replacing with "[REDACTED]"
+    - _redact_secrets strips TWILIO_AUTH_TOKEN, HMAC_MGMT_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from log event dict, replacing with "[REDACTED]"
     - get_logger(name) returns structlog.BoundLogger after calling configure_logging() if not already configured
-    - make_producer(bootstrap_servers) returns AIOKafkaProducer with acks="all", enable_idempotence=True, compression_type="gzip", linger_ms=5, max_in_flight_requests_per_connection=5
+    - make_producer(bootstrap_servers) returns AIOKafkaProducer with acks="all", enable_idempotence=True, compression_type="gzip", linger_ms=20, max_in_flight_requests_per_connection=5
   </behavior>
   <action>
 Review the shared/telemetry.py stub from Plan 01. The stub should already implement all required behaviors. Activate the unit tests by removing `@pytest.mark.skip` from tests/unit/test_telemetry_redaction.py.
@@ -184,7 +184,7 @@ Create `shared/kafka.py`:
 ```python
 """
 AIOKafkaProducer factory for Mise en Place (D-02).
-Named config: acks='all', enable_idempotence=True, compression_type='gzip', linger_ms=5.
+Named config: acks='all', enable_idempotence=True, compression_type='gzip', linger_ms=20.
 All producers created via this factory — no inline instantiation in services.
 """
 from __future__ import annotations
@@ -210,7 +210,7 @@ async def make_producer(bootstrap_servers: str | None = None) -> AIOKafkaProduce
         enable_idempotence=True,                      # prevents duplicates on retry
         max_in_flight_requests_per_connection=5,      # required with idempotence=True
         compression_type="gzip",                      # cheap at ~10KB messages
-        linger_ms=5,                                  # small batching window
+        linger_ms=20,                                  # small batching window
         request_timeout_ms=30_000,
         value_serializer=lambda v: v if isinstance(v, bytes) else v.encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8") if k else None,
@@ -241,7 +241,7 @@ async def test_make_producer_config():
         assert call_kwargs["acks"] == "all"
         assert call_kwargs["enable_idempotence"] is True
         assert call_kwargs["compression_type"] == "gzip"
-        assert call_kwargs["linger_ms"] == 5
+        assert call_kwargs["linger_ms"] == 20
         assert call_kwargs["max_in_flight_requests_per_connection"] == 5
 ```
   </action>
@@ -249,7 +249,7 @@ async def test_make_producer_config():
     <automated>uv run pytest tests/unit/test_telemetry_redaction.py tests/unit/test_kafka_config.py -v --tb=short 2>/dev/null || uv run pytest tests/unit/test_telemetry_redaction.py -v --tb=short</automated>
   </verify>
   <done>
-    All tests in test_telemetry_redaction.py pass; shared/kafka.py exists with make_producer() using acks="all", enable_idempotence=True, compression_type="gzip", linger_ms=5; `from shared.kafka import make_producer` imports cleanly
+    All tests in test_telemetry_redaction.py pass; shared/kafka.py exists with make_producer() using acks="all", enable_idempotence=True, compression_type="gzip", linger_ms=20; `from shared.kafka import make_producer` imports cleanly
   </done>
 </task>
 
@@ -284,8 +284,8 @@ from typing import AsyncGenerator
 from uuid import UUID
 
 from sqlalchemy import (
-    Boolean, Date, Float, Integer, LargeBinary, Text, Time,
-    TIMESTAMP, ForeignKey, Index,
+    ARRAY, BigInteger, Boolean, Date, Float, Integer, LargeBinary, Text, Time,
+    TIMESTAMP, ForeignKey, Index, UniqueConstraint, text as sa_text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -307,25 +307,28 @@ class User(Base):
 
 class Restaurant(Base):
     __tablename__ = "restaurants"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)          # 'opentable' | 'resy'
+    platform_id: Mapped[str] = mapped_column(Text, nullable=False)     # stringified OT rid or Resy venue_id
     name: Mapped[str] = mapped_column(Text, nullable=False)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     neighborhood: Mapped[str] = mapped_column(Text, nullable=False)
     cuisine: Mapped[str] = mapped_column(Text, nullable=False)
-    price_tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_tier: Mapped[int] = mapped_column(Integer, nullable=False)   # CHECK 1..4 enforced in migration
     cover_photo_url: Mapped[str] = mapped_column(Text, nullable=False)
-    opentable_rid: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    resy_venue_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     date_range_days: Mapped[int] = mapped_column(Integer, server_default="7", nullable=False)
-    party_sizes: Mapped[str] = mapped_column(Text, server_default="2,4", nullable=False)
+    party_sizes: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), server_default=sa_text("'{2,4}'::integer[]"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint("source", "platform_id", name="uq_restaurants_source_platform_id"),)
 
 
 class WatchlistEntry(Base):
     __tablename__ = "watchlist_entries"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    restaurant_id: Mapped[int] = mapped_column(Integer, ForeignKey("restaurants.id"), nullable=False)
+    restaurant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("restaurants.id"), nullable=False)
     party_size: Mapped[int] = mapped_column(Integer, nullable=False)
     date_from: Mapped[date] = mapped_column(Date, nullable=False)
     date_to: Mapped[date] = mapped_column(Date, nullable=False)
@@ -362,7 +365,7 @@ class NotificationLog(Base):
 class AvailabilityEvent(Base):
     __tablename__ = "availability_events"
     time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, primary_key=True)
-    restaurant_id: Mapped[int] = mapped_column(Integer, nullable=False, primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(BigInteger, nullable=False, primary_key=True)  # matches restaurants.id
     source: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     time_slot: Mapped[time | None] = mapped_column(Time, nullable=True)
@@ -380,7 +383,7 @@ class PollLog(Base):
     __tablename__ = "poll_log"
     # Named Symbol columns verbatim (D-31, REQUIREMENTS.md poll_log columns)
     time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, primary_key=True)
-    restaurant_id: Mapped[int] = mapped_column(Integer, nullable=False, primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(BigInteger, nullable=False, primary_key=True)  # matches restaurants.id
     source: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)   # 'success' | 'error' | 'timeout'
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -397,7 +400,7 @@ def get_engine():
     """Return the async SQLAlchemy engine. Creates it on first call."""
     global _engine
     if _engine is None:
-        url = os.getenv("DATABASE_URL", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
+        url = os.getenv("DATABASE_URL_ASYNC", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
         _engine = create_async_engine(url, echo=False, pool_pre_ping=True)
     return _engine
 
@@ -673,8 +676,7 @@ from typing import Any
 
 import yaml
 import redis.asyncio as redis
-from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from shared.redis_keys import SCHED_POLLS, job as make_job
@@ -690,7 +692,7 @@ async def seed(
     Upsert restaurants from YAML and seed sched:polls.
     Returns number of restaurants processed.
     """
-    db_url = db_url or os.getenv("DATABASE_URL", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
+    db_url = db_url or os.getenv("DATABASE_URL_ASYNC", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
     redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     data = yaml.safe_load(YAML_PATH.read_text())
@@ -703,46 +705,61 @@ async def seed(
     try:
         async with async_session() as session:
             for rest in restaurants:
-                # Idempotent UPSERT keyed on (source='opentable', platform_id=opentable_rid) (D-15)
-                stmt = pg_insert(text.__class__)  # placeholder — use raw SQL for simplicity
-                # Use raw SQL for the upsert to avoid ORM complexity with the RETURNING clause
+                # Derive (source, platform_id) from YAML fields: opentable_rid → ('opentable', str(rid)) (D-15).
+                source: str | None = None
+                platform_id: str | None = None
+                if rest.get("opentable_rid") is not None:
+                    source = "opentable"
+                    platform_id = str(rest["opentable_rid"])
+                elif rest.get("resy_venue_id") is not None:
+                    source = "resy"
+                    platform_id = str(rest["resy_venue_id"])
+                else:
+                    raise ValueError(
+                        f"Restaurant {rest.get('slug')!r} missing both opentable_rid and resy_venue_id"
+                    )
+
+                # Idempotent UPSERT keyed on (source, platform_id) UNIQUE constraint (D-15).
                 await session.execute(
                     text("""
                         INSERT INTO restaurants
-                            (name, slug, neighborhood, cuisine, price_tier, cover_photo_url,
-                             opentable_rid, resy_venue_id, created_at)
+                            (source, platform_id, name, slug, neighborhood, cuisine,
+                             price_tier, cover_photo_url, date_range_days, party_sizes, created_at)
                         VALUES
-                            (:name, :slug, :neighborhood, :cuisine, :price_tier, :cover_photo_url,
-                             :opentable_rid, :resy_venue_id, NOW())
-                        ON CONFLICT (slug) DO UPDATE SET
+                            (:source, :platform_id, :name, :slug, :neighborhood, :cuisine,
+                             :price_tier, :cover_photo_url, :date_range_days, :party_sizes, NOW())
+                        ON CONFLICT (source, platform_id) DO UPDATE SET
                             name             = EXCLUDED.name,
+                            slug             = EXCLUDED.slug,
                             neighborhood     = EXCLUDED.neighborhood,
                             cuisine          = EXCLUDED.cuisine,
                             price_tier       = EXCLUDED.price_tier,
                             cover_photo_url  = EXCLUDED.cover_photo_url,
-                            opentable_rid    = EXCLUDED.opentable_rid,
-                            resy_venue_id    = EXCLUDED.resy_venue_id
+                            date_range_days  = EXCLUDED.date_range_days,
+                            party_sizes      = EXCLUDED.party_sizes
                     """),
                     {
+                        "source": source,
+                        "platform_id": platform_id,
                         "name": rest["name"],
                         "slug": rest["slug"],
                         "neighborhood": rest["neighborhood"],
                         "cuisine": rest["cuisine"],
                         "price_tier": rest["price_tier"],
                         "cover_photo_url": rest["cover_photo_url"],
-                        "opentable_rid": rest.get("opentable_rid"),
-                        "resy_venue_id": rest.get("resy_venue_id"),
+                        "date_range_days": rest.get("date_range_days", 7),
+                        "party_sizes": rest.get("party_sizes", [2, 4]),
                     },
                 )
                 # Add to sched:polls ZSET with initial spread (D-15 SC3 ZSET side)
                 # Score = now_ms + random jitter 0..90s for initial spread
-                if rest.get("opentable_rid"):
+                if source == "opentable":
                     score = int(time.time() * 1000) + int(random.uniform(0, 90_000))
-                    await r.zadd(SCHED_POLLS, {make_job("opentable", rest["opentable_rid"]): score})
+                    await r.zadd(SCHED_POLLS, {make_job("opentable", int(platform_id)): score})
 
             await session.commit()
 
-        total = len([r for r in restaurants if r.get("opentable_rid")])
+        total = len([rest for rest in restaurants if rest.get("opentable_rid") is not None])
         print(f"Seeded {len(restaurants)} restaurants ({total} with OpenTable RIDs in sched:polls)")
         return len(restaurants)
 
@@ -773,7 +790,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 
 async def verify() -> None:
-    db_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
+    db_url = os.getenv("DATABASE_URL_ASYNC", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     engine = create_async_engine(db_url, echo=False)
@@ -784,7 +801,8 @@ async def verify() -> None:
         async with async_session() as session:
             result = await session.execute(text("""
                 SELECT COUNT(*) FROM restaurants
-                WHERE opentable_rid IS NOT NULL
+                WHERE source = 'opentable'
+                  AND platform_id IS NOT NULL
                   AND neighborhood IS NOT NULL
                   AND cuisine IS NOT NULL
                   AND price_tier IS NOT NULL
@@ -823,7 +841,7 @@ if __name__ == "__main__":
     <automated>uv run python -c "import scripts.seed_restaurants; import scripts.verify_seed; print('seed scripts importable')" 2>/dev/null || python3 -c "import ast; ast.parse(open('scripts/seed_restaurants.py').read()); ast.parse(open('scripts/verify_seed.py').read()); print('seed scripts parse OK')"</automated>
   </verify>
   <done>
-    scripts/seed_restaurants.py parses cleanly; uses ON CONFLICT (slug) DO UPDATE for idempotency (D-15); adds each opentable_rid to sched:polls ZSET with initial random score (0-90s spread, D-15); scripts/verify_seed.py checks both DB count >= 50 and ZCARD >= 50 and exits 1 on failure
+    scripts/seed_restaurants.py parses cleanly; derives (source='opentable', platform_id=str(opentable_rid)) and upserts via ON CONFLICT (source, platform_id) DO UPDATE for idempotency (D-15); adds each opentable_rid to sched:polls ZSET with initial random score (0-90s spread, D-15); scripts/verify_seed.py checks both DB count >= 50 and ZCARD >= 50 and exits 1 on failure
   </done>
 </task>
 
@@ -841,7 +859,7 @@ if __name__ == "__main__":
 
 | Threat ID | Category | Component | Disposition | Mitigation Plan |
 |-----------|----------|-----------|-------------|-----------------|
-| T-02 | Information Disclosure | structlog processor chain | mitigate | _redact_secrets processor fully implemented in shared/telemetry.py (this plan); strips TWILIO_AUTH_TOKEN, HMAC_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from every log event dict; unit tests in test_telemetry_redaction.py confirm all four keys are redacted — tests are active (no skips) after this plan |
+| T-02 | Information Disclosure | structlog processor chain | mitigate | _redact_secrets processor fully implemented in shared/telemetry.py (this plan); strips TWILIO_AUTH_TOKEN, HMAC_MGMT_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON from every log event dict; unit tests in test_telemetry_redaction.py confirm all four keys are redacted — tests are active (no skips) after this plan |
 | T-03 | Spoofing | User-Agent header in OpenTable requests | mitigate | User-Agent rotation list defined in services/poller/config.py (Plan 05); config.py is referenced here so Plan 05 implementers know where to put it; never use a single static UA string in production poller |
 </threat_model>
 
@@ -851,7 +869,7 @@ After all four tasks complete:
 ```bash
 # 1. All shared modules import
 uv run python -c "
-from shared.events import AvailabilityRawEvent, PollsCompletedEvent
+from shared.events import AvailabilityRaw, PollCompleted
 from shared.redis_keys import SCHED_POLLS, SCHED_POLLS_INFLIGHT, set_nx_ex
 from shared.db import get_engine, get_async_session, PollLog, Restaurant
 from shared.kafka import make_producer
@@ -881,7 +899,7 @@ python3 -c "import ast; ast.parse(open('scripts/seed_restaurants.py').read()); p
 - test_telemetry_redaction.py confirms all 4 secret keys are redacted
 - shared/db.py PollLog model has exactly these columns: time, restaurant_id, source, status, latency_ms, http_status, error, poll_id (Named Symbols verbatim)
 - shared/scheduler/lua.py LuaScheduler has claim(), release(), reap() using EVALSHA with NOSCRIPT fallback
-- scripts/seed_restaurants.py uses ON CONFLICT DO UPDATE keyed on slug; populates sched:polls ZSET
+- scripts/seed_restaurants.py uses ON CONFLICT (source, platform_id) DO UPDATE for idempotency; populates sched:polls ZSET
 - Integration test stubs for scheduler (test_scheduler_claim_release.py) and hypertable (test_hypertable_config.py) are fully implemented — no @pytest.mark.skip
 </success_criteria>
 

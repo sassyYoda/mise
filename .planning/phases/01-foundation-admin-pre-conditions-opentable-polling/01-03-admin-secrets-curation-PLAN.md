@@ -26,7 +26,7 @@ must_haves:
     - "GCP project `mise-en-place-prod` exists with Artifact Registry and Secret Manager APIs enabled"
     - "At least 3 Resy pre-authenticated accounts' cookies are stored in `.env` as `RESY_ACCOUNTS_JSON` and in GCP Secret Manager; convention 'cookies in Playwright context memory only, never in DB' is documented"
     - "VAPID keypair exists: `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` set in `.env` and GCP Secret Manager"
-    - "`HMAC_SECRET_V1` set in `.env` and GCP Secret Manager (generated from `secrets.token_bytes(32)`)"
+    - "`HMAC_MGMT_SECRET_V1` set in `.env` and GCP Secret Manager (generated from `secrets.token_bytes(32)`)"
     - "`scripts/seed/restaurants.yml` contains >= 50 NYC restaurants with all required fields"
   artifacts:
     - path: docs/admin-evidence/twilio-status.md
@@ -47,7 +47,7 @@ must_haves:
     - from: ".env"
       to: "GCP Secret Manager"
       via: "Secrets stored in both locations (D-09, D-24, D-25, D-26)"
-      pattern: "VAPID_PRIVATE_KEY|HMAC_SECRET_V1|RESY_ACCOUNTS_JSON"
+      pattern: "VAPID_PRIVATE_KEY|HMAC_MGMT_SECRET_V1|RESY_ACCOUNTS_JSON"
     - from: "scripts/seed/restaurants.yml"
       to: "scripts/seed_restaurants.py"
       via: "YAML seed file read by seed script (D-15)"
@@ -178,7 +178,11 @@ Record in docs/admin-evidence/gcp.md:
   <acceptance_criteria>
     - `grep -q "mise.place" docs/admin-evidence/domain.md`
     - `grep -q "mise-en-place-prod" docs/admin-evidence/gcp.md`
+    - `grep -q "artifactregistry.googleapis.com" docs/admin-evidence/gcp.md`
+    - `grep -q "secretmanager.googleapis.com" docs/admin-evidence/gcp.md`
     - `gcloud projects describe mise-en-place-prod --format="value(projectId)" 2>/dev/null | grep -q "mise-en-place-prod"`
+    - `gcloud services list --project=mise-en-place-prod --format="value(config.name)" 2>/dev/null | grep -q "artifactregistry.googleapis.com"`
+    - `gcloud services list --project=mise-en-place-prod --format="value(config.name)" 2>/dev/null | grep -q "secretmanager.googleapis.com"`
   </acceptance_criteria>
 </task>
 
@@ -234,18 +238,18 @@ Store both in GCP Secret Manager:
 HMAC secret generation (D-26):
   HMAC_SECRET=$(uv run python -c "import secrets; print(secrets.token_bytes(32).hex())")
 
-Copy HMAC_SECRET_V1=$HMAC_SECRET into .env.
+Copy HMAC_MGMT_SECRET_V1=$HMAC_SECRET into .env.
 Store in GCP Secret Manager:
-  gcloud secrets create HMAC_SECRET_V1 --data-file=- --project=mise-en-place-prod <<< "$HMAC_SECRET"
+  gcloud secrets create HMAC_MGMT_SECRET_V1 --data-file=- --project=mise-en-place-prod <<< "$HMAC_SECRET"
   </action>
   <acceptance_criteria>
     - `grep -q "RESY_ACCOUNTS_JSON" docs/admin-evidence/resy.md`
     - `grep -q "Account count" docs/admin-evidence/resy.md`
     - `grep -q "VAPID_PUBLIC_KEY" .env`
     - `grep -q "VAPID_PRIVATE_KEY" .env`
-    - `grep -q "HMAC_SECRET_V1" .env`
+    - `grep -q "HMAC_MGMT_SECRET_V1" .env`
     - `grep -q "RESY_ACCOUNTS_JSON" .env`
-    - HMAC_SECRET_V1 value in .env must be 64 hex characters (32 bytes)
+    - HMAC_MGMT_SECRET_V1 value in .env must be 64 hex characters (32 bytes)
   </acceptance_criteria>
 </task>
 
@@ -312,7 +316,7 @@ Commit scripts/seed/restaurants.yml when complete.
 
 | Threat ID | Category | Component | Disposition | Mitigation Plan |
 |-----------|----------|-----------|-------------|-----------------|
-| T-01 | Information Disclosure | .env secrets / git history | mitigate | All secrets (TWILIO_AUTH_TOKEN, HMAC_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON) stored only in .env (gitignored per D-09) and GCP Secret Manager; .env.example has placeholder values only; .gitignore entry for .env verified in Plan 01 |
+| T-01 | Information Disclosure | .env secrets / git history | mitigate | All secrets (TWILIO_AUTH_TOKEN, HMAC_MGMT_SECRET_V1, VAPID_PRIVATE_KEY, RESY_ACCOUNTS_JSON) stored only in .env (gitignored per D-09) and GCP Secret Manager; .env.example has placeholder values only; .gitignore entry for .env verified in Plan 01 |
 | T-05 | Information Disclosure | Resy session cookies | mitigate | Convention documented in docs/admin-evidence/resy.md: cookies in Playwright context memory ONLY during Phase 3 runtime; NEVER written to any database table; Phase 3 implementation enforces this; convention stated verbatim in docs/admin-evidence/resy.md for Phase 3 implementers |
 </threat_model>
 
@@ -333,7 +337,7 @@ grep -q "Account count" docs/admin-evidence/resy.md && echo "resy OK"
 
 # Secrets in .env (values must not equal placeholder)
 grep -q "VAPID_PUBLIC_KEY" .env && grep "VAPID_PUBLIC_KEY" .env | grep -v "your_vapid" && echo "VAPID OK"
-grep -q "HMAC_SECRET_V1" .env && grep "HMAC_SECRET_V1" .env | grep -v "your_32" && echo "HMAC OK"
+grep -q "HMAC_MGMT_SECRET_V1" .env && grep "HMAC_MGMT_SECRET_V1" .env | grep -v "your_32" && echo "HMAC OK"
 grep -q "RESY_ACCOUNTS_JSON" .env && echo "RESY OK"
 
 # SC3: >= 50 restaurants, all fields
@@ -356,8 +360,8 @@ print(f'SC3 OK: {len(entries)} restaurants, all fields present')
 - docs/admin-evidence/domain.md records registrar, expiry, DNS provider for mise.place
 - docs/admin-evidence/gcp.md confirms mise-en-place-prod project exists with both APIs enabled
 - docs/admin-evidence/resy.md confirms >= 3 accounts, storage locations, and cookie-in-memory-only convention stated
-- .env contains non-placeholder values for VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, HMAC_SECRET_V1, RESY_ACCOUNTS_JSON, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
-- HMAC_SECRET_V1 is 64 hex characters (32 bytes from secrets.token_bytes(32))
+- .env contains non-placeholder values for VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, HMAC_MGMT_SECRET_V1, RESY_ACCOUNTS_JSON, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+- HMAC_MGMT_SECRET_V1 is 64 hex characters (32 bytes from secrets.token_bytes(32))
 - scripts/seed/restaurants.yml contains >= 50 restaurants with all 7 required fields non-null — SC3 gate (YAML side) satisfied
 </success_criteria>
 

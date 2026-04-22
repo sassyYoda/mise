@@ -70,7 +70,7 @@ Wave 0 installs test infrastructure and creates the stubs that later waves fill 
 - [ ] `tests/conftest.py` — shared fixtures (event loop, structured-log silencer, testcontainers `kafka_container`, `redis_container`, `postgres_container` at `scope="module"`)
 - [ ] `tests/unit/__init__.py` + `tests/integration/__init__.py` — package markers
 - [ ] `tests/unit/test_redis_keys.py` — stubs for `shared.redis_keys` constants
-- [ ] `tests/unit/test_events_schema.py` — stubs for `shared.events` Pydantic models (AvailabilityRawEvent, PollsCompletedEvent)
+- [ ] `tests/unit/test_events_schema.py` — stubs for `shared.events` Pydantic models (AvailabilityRaw, PollCompleted)
 - [ ] `tests/integration/test_poller_smoke.py` — stub for SC1
 - [ ] `tests/integration/test_seed_idempotency.py` — stub for SC3
 - [ ] `tests/integration/test_hypertable_config.py` — stub for SC4

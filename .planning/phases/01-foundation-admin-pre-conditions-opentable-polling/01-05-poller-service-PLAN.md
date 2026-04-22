@@ -24,6 +24,9 @@ files_modified:
   - tests/integration/test_topics_created.py
   - tests/integration/test_redis_config.py
   - tests/integration/test_poll_log_writes.py
+  - tests/unit/test_http_client_singleton.py
+  - tests/unit/test_ua_rotation.py
+  - shared/http_client.py
 autonomous: false
 requirements_addressed:
   - POLL-01
@@ -178,7 +181,7 @@ Output: A complete `services/poller/` package; filled integration tests.
     services/poller/sources/opentable/README.md (spike findings from Task 1),
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-CONTEXT.md (D-05, D-17, D-19),
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-RESEARCH.md (§4 OpenTable adapter pattern; §5 httpx shared AsyncClient + tenacity retry),
-    shared/events.py (AvailabilityRawEvent, PollsCompletedEvent)
+    shared/events.py (AvailabilityRaw, PollCompleted)
   </read_first>
   <action>
 Create all __init__.py files as empty.
@@ -189,9 +192,8 @@ Create `services/poller/config.py`:
 import os
 import random
 
-# Polling schedule (D-17)
-POLL_INTERVAL_SECONDS = 90
-POLL_JITTER_FRACTION = 0.15
+# Polling schedule re-exports (D-17, single source of truth — shared/redis_keys.py)
+from shared.redis_keys import POLL_INTERVAL_SECONDS, POLL_JITTER_FRACTION  # noqa: F401
 
 # Date and party size defaults for OpenTable polling (D-19)
 DEFAULT_DATE_RANGE_DAYS = 7
@@ -217,8 +219,8 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
 # Redis settings
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Database settings
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
+# Database settings (Named Symbol: DATABASE_URL_ASYNC — asyncpg driver URL)
+DATABASE_URL_ASYNC = os.getenv("DATABASE_URL_ASYNC", "postgresql+asyncpg://mise:mise@localhost:5432/mise")
 ```
 
 Create `services/poller/sources/base.py`:
@@ -495,7 +497,7 @@ print('adapter imports OK')
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-CONTEXT.md (D-05, D-17, D-18, D-19, D-20, D-29),
     .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/01-RESEARCH.md (§3 EVALSHA caching pattern; §5 httpx shared AsyncClient pattern),
     shared/scheduler/lua.py (LuaScheduler class),
-    shared/events.py (AvailabilityRawEvent, PollsCompletedEvent),
+    shared/events.py (AvailabilityRaw, PollCompleted),
     shared/db.py (PollLog model, get_async_session)
   </read_first>
   <action>
@@ -516,7 +518,7 @@ from aiokafka import AIOKafkaProducer
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.events import AvailabilityRawEvent, PollsCompletedEvent
+from shared.events import AvailabilityRaw, PollCompleted
 from shared.db import PollLog, get_async_session
 from shared.telemetry import get_logger
 
@@ -535,6 +537,7 @@ class Publisher:
         source: str,
         restaurant_id: int,
         raw_response: dict[str, Any],
+        request_params: dict[str, Any],
         status: str,          # 'success' | 'error' | 'timeout'
         latency_ms: int,
         http_status: int | None = None,
@@ -549,12 +552,13 @@ class Publisher:
 
         # 1. Emit availability.raw (only on success — do not emit on error/timeout)
         if status == "success" and raw_response:
-            raw_event = AvailabilityRawEvent(
+            raw_event = AvailabilityRaw(
                 poll_id=poll_id,
                 source=source,            # type: ignore[arg-type]
                 restaurant_id=restaurant_id,
                 polled_at_epoch_ms=now_ms,
                 raw_response=raw_response,
+                request_params=request_params,
             )
             await self.producer.send(
                 "availability.raw",           # Named Symbol: availability.raw
@@ -564,11 +568,11 @@ class Publisher:
             log.info("availability_raw_published", poll_id=str(poll_id), restaurant_id=restaurant_id)
 
         # 2. Emit polls.completed (always — success, error, timeout)
-        completed_event = PollsCompletedEvent(
+        completed_event = PollCompleted(
             poll_id=poll_id,
             source=source,                # type: ignore[arg-type]
             restaurant_id=restaurant_id,
-            completed_at_epoch_ms=now_ms,
+            polled_at_epoch_ms=now_ms,
             status=status,                # type: ignore[arg-type]
             latency_ms=latency_ms,
             http_status=http_status,
@@ -675,12 +679,18 @@ async def poll_loop(
         raw_response: dict[str, Any] = {}
         http_status: int | None = None
         error_str: str | None = None
+        dates = _build_dates()
+        request_params: dict[str, Any] = {
+            "rid": restaurant_id,
+            "dates": dates,
+            "party_sizes": DEFAULT_PARTY_SIZES,
+        }
 
         try:
             if source == "opentable":
                 raw_response = await opentable.poll(
                     rid=restaurant_id,
-                    dates=_build_dates(),
+                    dates=dates,
                     party_sizes=DEFAULT_PARTY_SIZES,
                 )
                 status = "success"
@@ -706,6 +716,7 @@ async def poll_loop(
             source=source,
             restaurant_id=restaurant_id,
             raw_response=raw_response,
+            request_params=request_params,
             status=status,
             latency_ms=latency_ms,
             http_status=http_status,
@@ -762,10 +773,12 @@ import os
 
 import httpx
 import redis.asyncio as redis
+from aiokafka.admin import AIOKafkaAdminClient
 
 from shared.kafka import make_producer
 from shared.telemetry import configure_logging, get_logger
 from shared.scheduler.lua import LuaScheduler
+from shared.http_client import get_async_client, close_async_client
 from services.poller.sources.opentable.adapter import OpenTableAdapter
 from services.poller.publisher import Publisher
 from services.poller.scheduler import poll_loop
@@ -773,34 +786,59 @@ from services.poller.reaper import reaper_loop
 from services.poller.config import (
     REDIS_URL,
     KAFKA_BOOTSTRAP_SERVERS,
-    DATABASE_URL,
+    DATABASE_URL_ASYNC,
 )
 
 log = get_logger(__name__)
 
-HTTP_LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=20)
-HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)  # D-05: 10s read, 5s connect
+REQUIRED_TOPICS = {
+    "availability.raw",
+    "polls.completed",
+    "watchlist.commands",
+    "watchlist.events",
+    "notifications.delivered",
+}
+
+
+async def _assert_topics_exist(bootstrap_servers: str) -> None:
+    """Startup guard: refuse to run if any required topic is missing.
+
+    Plan 02 sets KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=false, so a missing topic
+    would otherwise fail silently per-publish. Fail fast instead with a clear
+    remediation message (D-27, RESEARCH.md §Validation Architecture).
+    """
+    admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap_servers)
+    await admin.start()
+    try:
+        existing = set(await admin.list_topics())
+    finally:
+        await admin.close()
+    missing = REQUIRED_TOPICS - existing
+    if missing:
+        raise RuntimeError(
+            f"Kafka topics missing: {sorted(missing)}. Run `make topics` first."
+        )
 
 
 async def run() -> None:
     configure_logging()
     log.info("poller_starting")
 
-    # Shared httpx.AsyncClient (D-05, Pitfall 9 — ONE client per process, in lifespan)
-    async with httpx.AsyncClient(
-        limits=HTTP_LIMITS,
-        timeout=HTTP_TIMEOUT,
-        http2=True,
-    ) as http_client:
+    # Shared httpx.AsyncClient (D-05, Pitfall 9 — ONE client per process via shared.http_client singleton).
+    http_client = get_async_client()
+    try:
         # Connect to Redis
         r = redis.from_url(REDIS_URL)
         scheduler = LuaScheduler(r)
         await scheduler.start()
 
+        # Precondition: all 5 Named Symbol topics must exist (D-27).
+        await _assert_topics_exist(KAFKA_BOOTSTRAP_SERVERS)
+
         # Connect to Kafka
         producer = await make_producer(KAFKA_BOOTSTRAP_SERVERS)
 
-        # Wire adapters
+        # Wire adapters (adapter uses the shared singleton — never constructs its own client).
         opentable = OpenTableAdapter(client=http_client)
         publisher = Publisher(producer=producer)
 
@@ -815,6 +853,8 @@ async def run() -> None:
             await producer.stop()
             await r.aclose()
             log.info("poller_stopped")
+    finally:
+        await close_async_client()
 
 
 if __name__ == "__main__":
@@ -834,7 +874,7 @@ asyncio.run(run())
 from services.poller.scheduler import poll_loop, _next_poll_score
 from services.poller.reaper import reaper_loop
 from services.poller.publisher import Publisher
-from services.poller.main import HTTP_LIMITS, HTTP_TIMEOUT
+from shared.http_client import LIMITS as HTTP_LIMITS, TIMEOUT as HTTP_TIMEOUT
 import httpx, time
 # Verify shared client limits
 assert HTTP_LIMITS.max_connections == 100
@@ -847,18 +887,21 @@ print('poller service OK')
 "</automated>
   </verify>
   <done>
-    publisher.py emits to "availability.raw" (Named Symbol) and "polls.completed" (Named Symbol) with key="{source}:{restaurant_id}" (D-29); writes poll_log row via AsyncSession INSERT before returning; scheduler.py uses LuaScheduler.claim/release with next score = now+90000±13500ms (D-17); reaper.py runs every REAPER_INTERVAL_SECONDS and logs at INFO on reap; main.py creates ONE httpx.AsyncClient with Limits(max_connections=100, max_keepalive_connections=20) and Timeout(10.0, connect=5.0); asyncio.gather runs poll_loop + reaper_loop concurrently; `python -m services.poller` entry point works
+    publisher.py emits to "availability.raw" (Named Symbol) and "polls.completed" (Named Symbol) with key="{source}:{restaurant_id}" (D-29); writes poll_log row via AsyncSession INSERT before returning; scheduler.py uses LuaScheduler.claim/release with next score = now+90000±13500ms (D-17); reaper.py runs every REAPER_INTERVAL_SECONDS and logs at INFO on reap; main.py obtains the single process-wide httpx.AsyncClient via shared.http_client.get_async_client() (Pitfall 9); the underlying Limits(max_connections=100, max_keepalive_connections=20) and Timeout(10.0, connect=5.0) are defined in shared/http_client.py as public LIMITS/TIMEOUT constants; main.py awaits close_async_client() in a finally block; asyncio.gather runs poll_loop + reaper_loop concurrently; `python -m services.poller` entry point works
   </done>
 </task>
 
 <task id="01-05-T4" type="auto">
-  <name>Task 4: Fill all remaining Wave-0 integration test stubs</name>
+  <name>Task 4: Fill all remaining Wave-0 integration test stubs + add unit tests for HTTP client singleton and UA rotation</name>
   <files>
     tests/integration/test_poller_smoke.py,
     tests/integration/test_seed_idempotency.py,
     tests/integration/test_topics_created.py,
     tests/integration/test_redis_config.py,
-    tests/integration/test_poll_log_writes.py
+    tests/integration/test_poll_log_writes.py,
+    tests/unit/test_http_client_singleton.py,
+    tests/unit/test_ua_rotation.py,
+    shared/http_client.py
   </files>
   <read_first>
     tests/integration/test_poller_smoke.py (current Wave-0 stub),
@@ -993,7 +1036,7 @@ def run_migrations(db_url_sync):
 def _run_seed(db_url_async: str, redis_url: str) -> int:
     env = {
         **os.environ,
-        "DATABASE_URL": db_url_async,
+        "DATABASE_URL_ASYNC": db_url_async,
         "REDIS_URL": redis_url,
     }
     result = subprocess.run(
@@ -1013,7 +1056,8 @@ async def test_seed_populates_all_fields_and_zset(db_url, redis_url, db_url_sync
     try:
         count = await conn.fetchval("""
             SELECT COUNT(*) FROM restaurants
-            WHERE opentable_rid IS NOT NULL
+            WHERE source = 'opentable'
+              AND platform_id IS NOT NULL
               AND neighborhood IS NOT NULL
               AND cuisine IS NOT NULL
               AND price_tier IS NOT NULL
@@ -1060,7 +1104,7 @@ import asyncpg
 from unittest.mock import AsyncMock, patch
 
 from services.poller.publisher import Publisher
-from shared.events import PollsCompletedEvent
+from shared.events import PollCompleted
 
 
 @pytest.fixture(scope="module")
@@ -1090,7 +1134,7 @@ def run_migrations(db_url_sync):
 async def test_poll_writes_row_with_latency(db_url, db_url_sync):
     """Publisher.publish() writes a poll_log row with status and latency_ms."""
     db_url_async = db_url_sync.replace("postgresql+psycopg://", "postgresql+asyncpg://")
-    os.environ["DATABASE_URL"] = db_url_async
+    os.environ["DATABASE_URL_ASYNC"] = db_url_async
 
     # Mock Kafka producer — we only test the DB write here
     mock_producer = AsyncMock()
@@ -1104,6 +1148,7 @@ async def test_poll_writes_row_with_latency(db_url, db_url_sync):
         source="opentable",
         restaurant_id=42,
         raw_response={"slots": []},
+        request_params={"rid": 42, "dates": ["2026-04-22"], "party_sizes": [2, 4]},
         status="success",
         latency_ms=250,
         http_status=200,
@@ -1175,7 +1220,7 @@ async def test_end_to_end_emit_within_60s(
     # Set env vars
     os.environ["KAFKA_BOOTSTRAP_SERVERS"] = kafka_bootstrap
     os.environ["REDIS_URL"] = redis_url
-    os.environ["DATABASE_URL"] = db_url_async
+    os.environ["DATABASE_URL_ASYNC"] = db_url_async
     os.environ["DATABASE_URL_SYNC"] = db_url_sync
 
     # Run migrations
@@ -1233,6 +1278,94 @@ async def test_end_to_end_emit_within_60s(
     finally:
         await consumer.stop()
 ```
+
+Create `shared/http_client.py` (singleton module — Pitfall 9):
+```python
+"""Shared httpx.AsyncClient singleton. One client per process — Pitfall 9."""
+from __future__ import annotations
+import httpx
+
+_client: httpx.AsyncClient | None = None
+LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def get_async_client() -> httpx.AsyncClient:
+    """Return the process-wide AsyncClient. Creates on first call."""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(limits=LIMITS, timeout=TIMEOUT)
+    return _client
+
+
+async def close_async_client() -> None:
+    """Close singleton client at shutdown. Safe to call multiple times."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+```
+
+Fill `tests/unit/test_http_client_singleton.py` — remove Wave-0 skip, assert singleton + limits:
+```python
+"""Unit tests for shared.http_client singleton (Pitfall 9)."""
+import asyncio
+import httpx
+import pytest
+
+from shared import http_client
+
+
+@pytest.fixture(autouse=True)
+def _reset_singleton():
+    # Ensure a clean singleton across tests.
+    asyncio.run(http_client.close_async_client())
+    yield
+    asyncio.run(http_client.close_async_client())
+
+
+def test_get_async_client_returns_singleton():
+    a = http_client.get_async_client()
+    b = http_client.get_async_client()
+    assert a is b
+    assert isinstance(a, httpx.AsyncClient)
+
+
+def test_client_limits_configured():
+    c = http_client.get_async_client()
+    # httpx stores limits on the transport/pool; assert the module-level constants.
+    assert http_client.LIMITS.max_connections == 100
+    assert http_client.LIMITS.max_keepalive_connections == 20
+```
+
+Create `tests/unit/test_ua_rotation.py` (T-03 — User-Agent rotation list):
+```python
+"""Unit tests for User-Agent rotation (T-03)."""
+from services.poller.config import USER_AGENTS, random_user_agent
+
+
+def test_user_agents_list_has_min_four_entries():
+    assert len(USER_AGENTS) >= 4, f"T-03 requires >=4 UAs, got {len(USER_AGENTS)}"
+
+
+def test_user_agents_are_unique():
+    assert len(set(USER_AGENTS)) == len(USER_AGENTS), "USER_AGENTS contains duplicates"
+
+
+def test_user_agents_are_real_browser_strings():
+    for ua in USER_AGENTS:
+        assert "Mozilla/5.0" in ua, f"UA missing real browser prefix: {ua!r}"
+
+
+def test_random_user_agent_returns_from_list():
+    for _ in range(20):
+        assert random_user_agent() in USER_AGENTS
+
+
+def test_random_user_agent_rotates_across_calls():
+    seen = {random_user_agent() for _ in range(200)}
+    assert len(seen) >= 2, "random_user_agent must rotate across calls (T-03)"
+```
   </action>
   <verify>
     <automated>uv run python -c "
@@ -1246,16 +1379,14 @@ stubs = [
 ]
 for s in stubs:
     txt = pathlib.Path(s).read_text()
-    # Verify no remaining pytest.mark.skip in actual test functions
-    # (skip in comments is OK)
     lines = [l for l in txt.split('\n') if 'mark.skip' in l and not l.strip().startswith('#')]
     assert not lines, f'{s} still has skip decorators: {lines}'
-    ast.parse(txt)  # syntax check
+    ast.parse(txt)
     print(f'{s}: OK (no skips, parses clean)')
-"</automated>
+" && uv run pytest tests/unit/test_http_client_singleton.py tests/unit/test_ua_rotation.py -v</automated>
   </verify>
   <done>
-    All 5 integration test stubs filled in with real test bodies; no @pytest.mark.skip remaining; test_redis_config tests noeviction; test_topics_created verifies all 5 Named Symbol topics; test_poll_log_writes verifies poll_log row has latency_ms and status in ('success','error','timeout'); test_poller_smoke uses respx to mock OpenTable and asserts availability.raw message emitted with correct key format
+    All 5 integration test stubs filled in with real test bodies; no @pytest.mark.skip remaining; test_redis_config tests noeviction; test_topics_created verifies all 5 Named Symbol topics; test_poll_log_writes verifies poll_log row has latency_ms and status in ('success','error','timeout'); test_poller_smoke uses respx to mock OpenTable and asserts availability.raw message emitted with correct key format. shared/http_client.py exposes get_async_client() singleton with Limits(100, 20). tests/unit/test_http_client_singleton.py asserts singleton identity + configured limits. tests/unit/test_ua_rotation.py asserts >=4 unique real-browser UAs and random_user_agent() rotates (T-03).
   </done>
 </task>
 
@@ -1287,7 +1418,7 @@ from services.poller.sources.opentable.adapter import OpenTableAdapter
 from services.poller.scheduler import poll_loop, _next_poll_score
 from services.poller.reaper import reaper_loop
 from services.poller.publisher import Publisher
-from services.poller.main import HTTP_LIMITS, HTTP_TIMEOUT
+from shared.http_client import LIMITS as HTTP_LIMITS, TIMEOUT as HTTP_TIMEOUT
 print('poller service imports OK')
 "
 
@@ -1323,7 +1454,7 @@ grep -rn "time\.sleep(" services/ 2>/dev/null | wc -l | grep "^0"
 - publisher.py writes poll_log row via AsyncSession INSERT before returning
 - scheduler.py computes next score as now_ms + 90000 + uniform(-13500, 13500) per D-17
 - reaper.py runs every REAPER_INTERVAL_SECONDS and logs reaped jobs at INFO level
-- main.py creates ONE httpx.AsyncClient with Limits(100, 20) and Timeout(10.0, 5.0)
+- shared/http_client.py exposes ONE process-wide httpx.AsyncClient via get_async_client() with public LIMITS=Limits(100, 20) and TIMEOUT=Timeout(10.0, 5.0); main.py consumes it via get_async_client() and awaits close_async_client() on shutdown (Pitfall 9)
 - `__main__.py` enables `python -m services.poller`
 - All 5 integration test stubs are filled in with real test bodies (no @pytest.mark.skip)
 </success_criteria>
