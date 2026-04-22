@@ -44,6 +44,9 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: integration tests requiring a container runtime (Docker/Podman)",
+]
 
 [tool.mypy]
 python_version = "3.12"
