@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 1 context gathered
-last_updated: "2026-04-21T22:22:04.652Z"
+stopped_at: Completed 01-03-admin-secrets-curation-PLAN.md (autonomous portion; 4 human-action items deferred)
+last_updated: "2026-04-22T13:27:54.236Z"
 last_activity: 2026-04-20 — Roadmap created; 57 v1 requirements mapped to 7 phases
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 6
-  completed_plans: 0
-  percent: 0
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -30,7 +30,7 @@ Plan: 0 of TBD in current phase
 Status: Ready to plan
 Last activity: 2026-04-20 — Roadmap created; 57 v1 requirements mapped to 7 phases
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01 P03 | 349 | 4 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -63,6 +64,8 @@ Recent decisions affecting current work:
 - Roadmap: Phase ordering follows research build order — OpenTable before Resy so Playwright risk cannot block State Machine or Notifications.
 - Roadmap: Twilio 10DLC registration is a Phase 1 Day-1 admin task (multi-week lead time gates Phase 4 SMS).
 - Roadmap: 12-hour Playwright soak test (PERF-05) is a hard gate before Resy goes live in production.
+- 01-03 delivered all autonomous pre-conditions: evidence-file shells for Twilio/Domain/GCP/Resy with STATUS: pending-admin-action banners, real HMAC_MGMT_SECRET_V1 + VAPID keypair generated locally into gitignored .env, and 55-entry scripts/seed/restaurants.yml (23 NYC neighborhoods, 30 cuisine types). Actual Twilio 10DLC submission, domain purchase, GCP project creation, and Resy cookie capture are BLOCKED ON HUMAN ACTION and listed verbatim in 01-03-SUMMARY.md.
+- Used cryptography.ec SECP256R1 directly rather than py_vapid for VAPID generation (py_vapid 1.9.x API incompatible with cryptography >=43 EC keys). Output format matches VAPID RFC 8292: 65-byte uncompressed P-256 public point + 32-byte big-endian private scalar, both b64url-no-pad.
 
 ### Pending Todos
 
@@ -89,8 +92,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 1 context gathered
-Resume file: --resume-file
+Last session: 2026-04-22T13:27:54.232Z
+Stopped at: Completed 01-03-admin-secrets-curation-PLAN.md (autonomous portion; 4 human-action items deferred)
+Resume file: None on autonomous work; Twilio/Domain/GCP/Resy human actions documented in 01-03-SUMMARY.md
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z

@@ -11,10 +11,14 @@ Requirements for MVP (8-week target). Each maps to exactly one roadmap phase.
 
 - [ ] **FOUND-01**: Monorepo scaffolded (services/, frontend/, terraform/, scripts/, .github/workflows/) with Docker Compose stack (Kafka, ZooKeeper or KRaft, Redis, TimescaleDB/PostgreSQL) runnable via `docker compose up`
 - [ ] **FOUND-02**: PostgreSQL + TimescaleDB schema created via Alembic migrations (users, restaurants, watchlist_entries, notification_log, availability_events hypertable, poll_log hypertable)
-- [ ] **FOUND-03**: Initial NYC restaurant catalog (≥ 50 restaurants) seeded with platform IDs, neighborhood, cuisine, price tier, cover photo
-- [ ] **FOUND-04**: Kafka topics created (`availability.raw`, `availability.events`, `notifications.queued`, `notifications.sent`, `polls.completed`) with retention policies; single-broker acceptable at MVP
-- [ ] **FOUND-05**: Twilio A2P 10DLC / toll-free registration submitted on Day 1 of Week 1 (multi-week lead time); domain `mise.place` registered; GCP project + Artifact Registry + secrets manager provisioned
-- [ ] **FOUND-06**: Manually created pre-authenticated Resy accounts stored as encrypted secrets; VAPID keypair generated; HMAC management-token secret generated
+- [x] **FOUND-03
+**: Initial NYC restaurant catalog (≥ 50 restaurants) seeded with platform IDs, neighborhood, cuisine, price tier, cover photo
+- [x] **FOUND-04
+**: Kafka topics created (`availability.raw`, `availability.events`, `notifications.queued`, `notifications.sent`, `polls.completed`) with retention policies; single-broker acceptable at MVP
+- [x] **FOUND-05
+**: Twilio A2P 10DLC / toll-free registration submitted on Day 1 of Week 1 (multi-week lead time); domain `mise.place` registered; GCP project + Artifact Registry + secrets manager provisioned
+- [x] **FOUND-06
+**: Manually created pre-authenticated Resy accounts stored as encrypted secrets; VAPID keypair generated; HMAC management-token secret generated
 
 ### Polling Engine
 
