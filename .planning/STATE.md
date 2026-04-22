@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Completed 01-03-admin-secrets-curation-PLAN.md (autonomous portion; 4 human-action items deferred)
-last_updated: "2026-04-22T13:27:54.236Z"
-last_activity: 2026-04-20 — Roadmap created; 57 v1 requirements mapped to 7 phases
+status: executing
+stopped_at: Completed 01-05-poller-service-PLAN.md (4 autonomous tasks; OpenTable DevTools spike BLOCKED ON HUMAN ACTION)
+last_updated: "2026-04-22T13:38:57.082Z"
+last_activity: 2026-04-22 — Plan 01-05 poller service complete; `make poll` runnable, 5 Wave-0 integration stubs filled
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 1 of 7 (Foundation, Admin Pre-conditions & OpenTable Polling)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-04-20 — Roadmap created; 57 v1 requirements mapped to 7 phases
+Plan: 5 of 6 in current phase (01-06 next)
+Status: Executing
+Last activity: 2026-04-22 — Plan 01-05 poller service complete; `make poll` runnable, 5 Wave-0 integration stubs filled
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [███████░░░] 67%
 
 *Updated after each plan completion*
 | Phase 01 P03 | 349 | 4 tasks | 6 files |
+| Phase 01 P05 | 407 | 4 tasks | 16 files created + 5 modified |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - Roadmap: 12-hour Playwright soak test (PERF-05) is a hard gate before Resy goes live in production.
 - 01-03 delivered all autonomous pre-conditions: evidence-file shells for Twilio/Domain/GCP/Resy with STATUS: pending-admin-action banners, real HMAC_MGMT_SECRET_V1 + VAPID keypair generated locally into gitignored .env, and 55-entry scripts/seed/restaurants.yml (23 NYC neighborhoods, 30 cuisine types). Actual Twilio 10DLC submission, domain purchase, GCP project creation, and Resy cookie capture are BLOCKED ON HUMAN ACTION and listed verbatim in 01-03-SUMMARY.md.
 - Used cryptography.ec SECP256R1 directly rather than py_vapid for VAPID generation (py_vapid 1.9.x API incompatible with cryptography >=43 EC keys). Output format matches VAPID RFC 8292: 65-byte uncompressed P-256 public point + 32-byte big-endian private scalar, both b64url-no-pad.
+- 01-05 corrected a plan-text bug: REQUIRED_TOPICS in services/poller/main.py uses the 5 Named-Symbol topics (availability.raw, availability.events, polls.completed, notifications.queued, notifications.sent) rather than the plan-text's watchlist.commands/watchlist.events/notifications.delivered (which do not exist in scripts/create_topics.py).
+- 01-05 OpenTable DevTools spike deferred to human action: placeholder endpoint/headers/fixtures seeded in services/poller/sources/opentable/ with [ASSUMED]/TODO(spike) markers so adapter code + respx-mocked tests work today. Live capture on opentable.com required before Plan 06 PERF-02 gate to confirm >= 99% success rate under the real endpoint.
 
 ### Pending Todos
 
@@ -92,8 +95,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-22T13:27:54.232Z
-Stopped at: Completed 01-03-admin-secrets-curation-PLAN.md (autonomous portion; 4 human-action items deferred)
-Resume file: None on autonomous work; Twilio/Domain/GCP/Resy human actions documented in 01-03-SUMMARY.md
+Last session: 2026-04-22T13:38:57Z
+Stopped at: Completed 01-05-poller-service-PLAN.md (4 autonomous tasks; OpenTable DevTools spike BLOCKED ON HUMAN ACTION)
+Resume file: 01-05-SUMMARY.md "BLOCKED ON HUMAN ACTION" section — DevTools capture required before Plan 01-06 PERF-02 24h run
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z

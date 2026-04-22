@@ -40,7 +40,7 @@ Plans:
 - [ ] 01-02-infra-schema-topics-PLAN.md — Docker Compose infra, Alembic migrations, Kafka topics
 - [ ] 01-03-admin-secrets-curation-PLAN.md — Twilio 10DLC, domain, GCP, Resy accounts, VAPID, HMAC, 50 restaurants
 - [ ] 01-04-shared-kernel-PLAN.md — shared/events.py, shared/db.py, shared/kafka.py, scheduler Lua, seed script
-- [ ] 01-05-poller-service-PLAN.md — OpenTable adapter, scheduler loop, reaper, publisher, main entry point
+- [x] 01-05-poller-service-PLAN.md — OpenTable adapter, scheduler loop, reaper, publisher, main entry point
 - [ ] 01-06-perf02-verification-PLAN.md — check_poll_success.py, README legal+Kafka sections, 24h PERF-02 run
 **UI hint**: no
 
@@ -129,7 +129,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Admin & OpenTable Polling | 0/TBD | Not started | - |
+| 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
 | 2. State Machine & Event Pipeline | 0/TBD | Not started | - |
 | 3. Resy & Playwright Fleet | 0/TBD | Not started | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |

@@ -22,13 +22,13 @@ Requirements for MVP (8-week target). Each maps to exactly one roadmap phase.
 
 ### Polling Engine
 
-- [ ] **POLL-01**: Redis ZSET distributed poll scheduler (keyed by `next_poll_at` Unix timestamp); workers pop due jobs atomically and no-op when empty
+- [x] **POLL-01**: Redis ZSET distributed poll scheduler (keyed by `next_poll_at` Unix timestamp); workers pop due jobs atomically and no-op when empty
 - [ ] **POLL-02**: Polling worker supports three tiers (Tier 1: 60s for ≥ 10 watches, Tier 2: 3min for 3–9 watches, Tier 3: 10min for 1–2 watches) with ±15% jitter and exponential backoff on 429/503
-- [ ] **POLL-03**: OpenTable polling via `httpx` async client against the widget GraphQL availability endpoint; 90s minimum interval; parses slots with availability, seat area, and booking token
+- [x] **POLL-03**: OpenTable polling via `httpx` async client against the widget GraphQL availability endpoint; 90s minimum interval; parses slots with availability, seat area, and booking token
 - [ ] **POLL-04**: Resy polling via a Playwright browser pool (1 browser, 4 isolated BrowserContexts) with pre-authenticated sessions, `tf-playwright-stealth`, fingerprint rotation, and realistic request headers
 - [ ] **POLL-05**: Resy scraper calls the internal availability API endpoint (`/api/4/find`) directly rather than loading full HTML pages; enforces ≤ 1 request / 45s per restaurant per context and ≤ 80 req/min total across all contexts
 - [ ] **POLL-06**: Soft-ban detection — response-signature canary metric catches `200 OK` responses with sanitized / empty availability data; alerts on anomaly
-- [ ] **POLL-07**: Poll results emitted to Kafka topic `availability.raw` with poll latency and `polls.completed` events written to TimescaleDB `poll_log`
+- [x] **POLL-07**: Poll results emitted to Kafka topic `availability.raw` with poll latency and `polls.completed` events written to TimescaleDB `poll_log`
 
 ### State Machine & Event Pipeline
 
@@ -148,13 +148,13 @@ Populated by roadmap creation 2026-04-20. All v1 REQ-IDs map to exactly one phas
 | FOUND-04 | Phase 1 | Pending |
 | FOUND-05 | Phase 1 | Pending |
 | FOUND-06 | Phase 1 | Pending |
-| POLL-01 | Phase 1 | Pending |
+| POLL-01 | Phase 1 | Complete (01-05) |
 | POLL-02 | Phase 3 | Pending |
-| POLL-03 | Phase 1 | Pending |
+| POLL-03 | Phase 1 | Complete (01-05 — pending DevTools spike) |
 | POLL-04 | Phase 3 | Pending |
 | POLL-05 | Phase 3 | Pending |
 | POLL-06 | Phase 3 | Pending |
-| POLL-07 | Phase 1 | Pending |
+| POLL-07 | Phase 1 | Complete (01-05) |
 | STATE-01 | Phase 2 | Pending |
 | STATE-02 | Phase 2 | Pending |
 | STATE-03 | Phase 2 | Pending |
