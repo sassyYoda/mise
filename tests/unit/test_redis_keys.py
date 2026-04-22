@@ -41,3 +41,28 @@ async def test_set_nx_ex_returns_false_when_key_exists():
     mock_redis.set.return_value = None  # Redis returns None when NX fails
     result = await set_nx_ex(mock_redis, "existing", "val", 60)
     assert result is False
+
+
+def test_lua_scripts_are_non_empty_strings():
+    from shared.redis_keys import CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA
+    assert isinstance(CLAIM_POLL_LUA, str) and len(CLAIM_POLL_LUA) > 50
+    assert isinstance(RELEASE_POLL_LUA, str) and len(RELEASE_POLL_LUA) > 30
+    assert isinstance(REAP_INFLIGHT_LUA, str) and len(REAP_INFLIGHT_LUA) > 50
+
+
+def test_lua_claim_uses_zrangebyscore():
+    from shared.redis_keys import CLAIM_POLL_LUA
+    assert "ZRANGEBYSCORE" in CLAIM_POLL_LUA
+    assert "ZADD" in CLAIM_POLL_LUA
+    assert "ZREM" in CLAIM_POLL_LUA
+
+
+def test_constants_values():
+    from shared.redis_keys import (
+        POLL_VISIBILITY_TIMEOUT_MS,
+        POLL_INTERVAL_SECONDS,
+        POLL_JITTER_FRACTION,
+    )
+    assert POLL_VISIBILITY_TIMEOUT_MS == 60_000
+    assert POLL_INTERVAL_SECONDS == 90
+    assert abs(POLL_JITTER_FRACTION - 0.15) < 0.001
