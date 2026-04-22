@@ -1,0 +1,26 @@
+name: lint
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - name: ruff check
+        run: uv run ruff check .
+      - name: mypy
+        run: uv run mypy shared/ services/
+      - name: ban_requests_import
+        run: |
+          ! grep -rn "^import requests\|^from requests " services/ shared/
+      - name: ban_time_sleep_in_async
+        run: |
+          ! grep -rn "time\.sleep(" services/ shared/
+      - name: ban_sync_redis_import
+        run: |
+          ! grep -rEn "^import redis$|^from redis import " services/ shared/

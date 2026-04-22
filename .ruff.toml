@@ -1,0 +1,11 @@
+[lint]
+select = ["E", "F", "W", "I", "UP", "ASYNC"]
+ignore = []
+
+[lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# Pitfall 16: Ban blocking patterns in async service code.
+# These are enforced here and documented in CONTRIBUTING.md.
+# ruff does not have a custom "banned import" rule natively — use the ASYNC rules
+# plus document the CI grep in CONTRIBUTING.md.
