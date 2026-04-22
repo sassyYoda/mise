@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-05-poller-service-PLAN.md (4 autonomous tasks; OpenTable DevTools spike BLOCKED ON HUMAN ACTION)
-last_updated: "2026-04-22T13:38:57.082Z"
-last_activity: 2026-04-22 — Plan 01-05 poller service complete; `make poll` runnable, 5 Wave-0 integration stubs filled
+stopped_at: Completed 01-06-perf02-verification-PLAN.md autonomous portion (2 tasks; 24h PERF-02 observation BLOCKED ON HUMAN ACTION)
+last_updated: "2026-04-22T13:57:34.545Z"
+last_activity: 2026-04-22
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 1 of 7 (Foundation, Admin Pre-conditions & OpenTable Polling)
-Plan: 5 of 6 in current phase (01-06 next)
-Status: Executing
-Last activity: 2026-04-22 — Plan 01-05 poller service complete; `make poll` runnable, 5 Wave-0 integration stubs filled
+Plan: 6 of 6 in current phase (01-06 next)
+Status: Ready to execute
+Last activity: 2026-04-22
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [████████░░] 83%
 *Updated after each plan completion*
 | Phase 01 P03 | 349 | 4 tasks | 6 files |
 | Phase 01 P05 | 407 | 4 tasks | 16 files created + 5 modified |
+| Phase 01 P06 | 187 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,7 @@ Recent decisions affecting current work:
 - Used cryptography.ec SECP256R1 directly rather than py_vapid for VAPID generation (py_vapid 1.9.x API incompatible with cryptography >=43 EC keys). Output format matches VAPID RFC 8292: 65-byte uncompressed P-256 public point + 32-byte big-endian private scalar, both b64url-no-pad.
 - 01-05 corrected a plan-text bug: REQUIRED_TOPICS in services/poller/main.py uses the 5 Named-Symbol topics (availability.raw, availability.events, polls.completed, notifications.queued, notifications.sent) rather than the plan-text's watchlist.commands/watchlist.events/notifications.delivered (which do not exist in scripts/create_topics.py).
 - 01-05 OpenTable DevTools spike deferred to human action: placeholder endpoint/headers/fixtures seeded in services/poller/sources/opentable/ with [ASSUMED]/TODO(spike) markers so adapter code + respx-mocked tests work today. Live capture on opentable.com required before Plan 06 PERF-02 gate to confirm >= 99% success rate under the real endpoint.
+- 01-06: PERF-02 tooling complete (check_poll_success.py with time_bucket SELECT + exit 0/1/2 gate, README legal + Kafka tradeoff + runbook, runbook procedure filled). 24h observation run (T3/T4) BLOCKED ON HUMAN ACTION; cannot declare PERF-02 pass or Phase 01 complete until DevTools spike + 24h run + FD evidence gathered.
 
 ### Pending Todos
 
@@ -84,6 +86,7 @@ None yet.
 - [Phase 4] iOS PWA Web Push requires real-device test (not simulator) — subscription silently revokes after ~3 pushes if service worker `push` handler does not wrap entire async chain in `event.waitUntil(...)`.
 - [Phase 4] Every idempotency key must use atomic `SET key value NX EX ttl` — zero occurrences of two-command `SETNX` + `EXPIRE` in source tree.
 - [Phase 7] Public read-only Grafana dashboard link is launch-blocking for portfolio credibility, not optional polish.
+- [Phase 1 CLOSE] PERF-02 24h observation run (01-06 T3/T4) requires OpenTable DevTools spike (01-05 T1) + infra up + 24h wall-clock wait. Full runbook at docs/runbooks/perf02-24h-log.md. Phase 01 cannot close until this run passes + admin gates from 01-03 complete.
 
 ## Deferred Items
 
@@ -95,8 +98,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-22T13:38:57Z
-Stopped at: Completed 01-05-poller-service-PLAN.md (4 autonomous tasks; OpenTable DevTools spike BLOCKED ON HUMAN ACTION)
-Resume file: 01-05-SUMMARY.md "BLOCKED ON HUMAN ACTION" section — DevTools capture required before Plan 01-06 PERF-02 24h run
+Last session: 2026-04-22T13:57:28.381Z
+Stopped at: Completed 01-06-perf02-verification-PLAN.md autonomous portion (2 tasks; 24h PERF-02 observation BLOCKED ON HUMAN ACTION)
+Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
