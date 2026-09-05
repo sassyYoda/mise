@@ -143,6 +143,13 @@ uses the latter. Remember the doubled `%%` if a percent sign appears — alembic
 `downgrade()` drops the materialized view with `IF EXISTS`. It is additive DDL, so no row guard is needed, but keep
 the 0008 "refuse loudly rather than silently destroy" tone in the docstring.
 
+Add one more comment above the hour expression recording the daylight-saving reasoning (RESEARCH Pitfall 9), so a
+future reader does not "fix" it: hourly buckets are UTC-aligned and America/New_York is a whole-hour offset, so the
+local hour is constant within every bucket and the grouping is well defined; at the autumn transition two UTC hours
+map to one local hour and, for a frequency heatmap, the counts simply add, which is correct. Note that the zone
+conversion is STABLE rather than IMMUTABLE and that this TimescaleDB version accepts it anyway — if a future version
+rejects it, the fallback is a generated column on the hypertable, never a hard-coded offset.
+
 Write `tests/integration/test_cagg_availability_events_hourly.py` with `pytestmark = pytest.mark.integration` and the
 module-scoped `apply_migrations` fixture from `tests/integration/conftest.py`. Assert: the view exists in
 `timescaledb_information.continuous_aggregates`; its `materialized_only` is `false`; exactly one refresh policy job
