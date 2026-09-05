@@ -350,3 +350,9 @@ None — no external service configuration required. This plan is pure in-proces
 ---
 *Phase: 02-state-machine-event-pipeline*
 *Completed: 2026-09-05*
+
+## Self-Check: PASSED
+
+All 18 claimed files verified present on disk; all 7 claimed commits verified in `git log`.
+Final gate re-run at completion: `ruff check .` clean, `mypy shared/ services/` clean (30 files),
+`pytest tests/unit -q` 89 passed, `pytest tests/integration -q` 12 passed.
