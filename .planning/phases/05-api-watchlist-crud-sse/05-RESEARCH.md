@@ -1319,7 +1319,7 @@ async def live_api(app: FastAPI) -> AsyncIterator[str]:
 | A7 | `EventSource` in the Phase 6 PWA sends `Last-Event-ID` on reconnect (WHATWG behaviour) | SSE | The `?last_event_id=` query fallback is implemented regardless, so a failure degrades to "replay nothing" rather than an error |
 | A8 | The `notification_log` history join for `GET /watches` (last 20 rows per watch) stays cheap | D-95 | At MVP volumes trivially true; a lateral join or a per-watch `LIMIT 20` subquery is the fix if it is not |
 
-## Open Questions
+## Open Questions (RESOLVED — see 05-CONTEXT.md amendments D-93a/D-93b/D-95a/D-104b; OQ-4, OQ-6 implemented as recommended in 05-01/05-04)
 
 ### OQ-1 — Which timezone defines "today" for `date_from`, and should the whole API adopt it?
 
