@@ -4,17 +4,20 @@ All three scripts use EVALSHA with fallback to EVAL on NOSCRIPT error.
 Named symbols: CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA (re-exported from shared.redis_keys)
 """
 from __future__ import annotations
-from typing import Any
+
+from collections.abc import Awaitable
+from typing import Any, cast
 
 import redis.asyncio as redis
+from redis.exceptions import NoScriptError
 
 from shared.redis_keys import (
+    CLAIM_POLL_LUA,
+    POLL_VISIBILITY_TIMEOUT_MS,
+    REAP_INFLIGHT_LUA,
+    RELEASE_POLL_LUA,
     SCHED_POLLS,
     SCHED_POLLS_INFLIGHT,
-    POLL_VISIBILITY_TIMEOUT_MS,
-    CLAIM_POLL_LUA,
-    RELEASE_POLL_LUA,
-    REAP_INFLIGHT_LUA,
 )
 
 
@@ -41,10 +44,10 @@ class LuaScheduler:
     ) -> Any:
         """EVALSHA with automatic re-load fallback on NOSCRIPT (Redis restart / FLUSHSCRIPTS)."""
         try:
-            return await self.r.evalsha(sha, numkeys, *args)
-        except redis.exceptions.NoScriptError:
+            return await cast(Awaitable[Any], self.r.evalsha(sha, numkeys, *args))
+        except NoScriptError:
             new_sha = await self.r.script_load(script)
-            return await self.r.evalsha(new_sha, numkeys, *args)
+            return await cast(Awaitable[Any], self.r.evalsha(new_sha, numkeys, *args))
 
     async def claim(self, now_ms: int) -> str | None:
         """
