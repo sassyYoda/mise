@@ -1,6 +1,6 @@
 """
 Structured logging via structlog (D-12, D-13).
-Named symbol: configure_logging, get_logger, safe_error
+Named symbols: configure_logging, get_logger, safe_error, _redact_secrets
 """
 from __future__ import annotations
 
@@ -84,20 +84,100 @@ def safe_error(exc: BaseException) -> str:
     return f"{qualified}: {message}" if message else qualified
 
 
-def _redact_secrets(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    """
-    Strips values matching sensitive env-var names from log event dicts (T-02).
-    Applied on every log call.
-    """
-    _REDACTED = "[REDACTED]"
-    _SECRET_KEYS = {
+_REDACTED = "[REDACTED]"
+
+# Exact env-var names (Phase 1, T-02). Matched case-SENSITIVELY: these are env vars, and an
+# env var's name is its exact spelling.
+_SECRET_KEYS = frozenset(
+    {
         "TWILIO_AUTH_TOKEN",
         "HMAC_MGMT_SECRET_V1",
         "VAPID_PRIVATE_KEY",
         "RESY_ACCOUNTS_JSON",
     }
+)
+
+# Phase 3 (D-61a, research B-6). These are HTTP HEADER names as much as env-var names, and a
+# header's casing is whatever the peer sent — `Cookie`, `cookie` and `COOKIE` are one header.
+# Matched case-INSENSITIVELY for that reason. Research reproduced six of these eight leaking
+# in full against the pre-Phase-3 redactor, before any cookie-handling code existed.
+_SECRET_KEYS_CI = frozenset(
+    {
+        "cookie",
+        "cookies",
+        "set-cookie",
+        "auth_token",
+        "x-resy-auth-token",
+        "authorization",
+        "api_key",
+        "resy_api_key",
+    }
+)
+
+# Proxy URLs are masked rather than blanked: WHICH proxy host was in play is a real
+# diagnostic during a soft-ban incident, while the credentials in the userinfo segment are a
+# purchased subscription's password.
+_PROXY_KEYS_CI = frozenset({"proxy_url", "resy_proxy_url", "proxy"})
+
+# `scheme://` followed by an OPTIONAL `userinfo@` segment. The userinfo group stops at the
+# first `/` so a path component containing `@` is never mistaken for credentials, and it is
+# greedy within the authority so a password containing an escaped `@` is still fully covered.
+_PROXY_URL_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@]*@)?")
+
+
+def _mask_proxy_credentials(value: Any) -> str:
+    """
+    Return ``value`` with any URL userinfo segment replaced by the redaction sentinel.
+
+    A proxy URL is masked rather than blanked because WHICH proxy host was in play is a real
+    diagnostic during a soft-ban incident — an operator needs to know the fleet was egressing
+    through `residential.example.net` — while the userinfo segment is a purchased
+    subscription's password.
+
+    Fails CLOSED: a non-string, or a value that does not parse as `scheme://…`, is redacted
+    wholesale rather than emitted on the hope that it carries no password. A value under a
+    proxy key that this function cannot understand is exactly the case where guessing is
+    unsafe. A well-formed URL with no userinfo is returned untouched — there is nothing to
+    hide, and hiding it anyway would be the over-breadth this redactor avoids.
+    """
+    if not isinstance(value, str):
+        return _REDACTED
+    match = _PROXY_URL_RE.match(value)
+    if match is None:
+        return _REDACTED
+    if match.group(2) is None:
+        return value
+    return f"{match.group(1)}{_REDACTED}@{value[match.end():]}"
+
+
+def _redact_secrets(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Strip values matching sensitive key names from log event dicts (T-02, T-03-05, D-61a).
+
+    Applied on EVERY log call, so it stays pure and allocation-cheap: one `lower()` per key
+    and no work at all for the overwhelmingly common case of a benign field.
+
+    This redactor is **key-name based**, which is a real and permanent limitation: it cannot
+    save a caller who logs a whole header mapping under a benign key such as
+    `headers=` or `raw_response=`. That is precisely why `services/poller/sources/resy/`
+    is forbidden from logging `raw_response`, a `booking_token`, or a header dict at INFO —
+    the ban is the control; this function is only the backstop. It is also deliberately NOT
+    over-broad: `cookie_count` is a count, and a redactor that swallowed it would destroy
+    the diagnostics an incident depends on while training readers to ignore `[REDACTED]`.
+
+    The Resy secrets it covers are a THIRD PARTY's credentials, replayed under a human's
+    supervision. They may not reach Postgres, Kafka, `poll_log`, a structlog line, or a file
+    on disk.
+    """
     for k in list(event_dict.keys()):
-        if k in _SECRET_KEYS or k.startswith("RESY_ACCOUNT_") and k.endswith("_PASSWORD"):
+        lowered = k.lower()
+        if lowered in _PROXY_KEYS_CI:
+            event_dict[k] = _mask_proxy_credentials(event_dict[k])
+        elif (
+            k in _SECRET_KEYS
+            or lowered in _SECRET_KEYS_CI
+            or (k.startswith("RESY_ACCOUNT_") and k.endswith("_PASSWORD"))
+        ):
             event_dict[k] = _REDACTED
     return event_dict
 
