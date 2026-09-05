@@ -8,6 +8,8 @@ already uses for the mass-closure audit.
 """
 from __future__ import annotations
 
+import pytest
+
 from services.state_machine.engine import DiffEngine
 from services.state_machine.store import MemoryStateStore
 from tests.unit.factories import make_parsed, make_slot
@@ -79,4 +81,34 @@ async def test_the_collision_count_is_reset_between_polls() -> None:
     await engine.process(colliding)
     assert engine.last_collision_count == 1
     await engine.process(clean)
+    assert engine.last_collision_count == 0
+
+
+# -- IN-05: the two observation counters must share a reset point --
+
+
+class _ExplodingStore(MemoryStateStore):
+    """A store that fails partway through the diff, exactly as a Redis timeout would."""
+
+    async def get_slots(self, rid: int, date: str, party: int):  # type: ignore[override]
+        raise RuntimeError("redis went away mid-diff")
+
+
+async def test_a_failed_poll_never_leaves_a_stale_close_count() -> None:
+    """`last_close_count` used to be assigned only at the END of process().
+
+    An exception mid-diff therefore left this poll's fresh collision count paired with the
+    PREVIOUS poll's close count — two counters describing two different polls, which is the
+    trap the Phase 3 canary that consumes them would inherit.
+    """
+    engine = DiffEngine(_ExplodingStore(), confirm_delay_ms=CONFIRM_DELAY_MS)
+    engine.last_close_count = 7
+    engine.last_collision_count = 3
+
+    with pytest.raises(RuntimeError):
+        await engine.process(
+            make_parsed(rid=RID, polled_at_epoch_ms=T0, coverage={(DATE, PARTY)})
+        )
+
+    assert engine.last_close_count == 0, "a stale close count survived a failed poll"
     assert engine.last_collision_count == 0

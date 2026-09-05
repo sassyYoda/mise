@@ -98,6 +98,14 @@ class DiffEngine:
 
     async def process(self, parsed: ParsedPoll) -> list[Decision]:
         """Diff one normalised poll against stored state and return the decisions to execute."""
+        # Both observation counters reset HERE, on the first line (IN-05). They used to have
+        # different reset points — collisions early, closures only at the end — so an
+        # exception mid-process() left this poll's collision count paired with the PREVIOUS
+        # poll's close count. Benign while the shell reads both only after a successful
+        # process(), and a trap for the Phase 3 canary that will consume them.
+        self.last_close_count = 0
+        self.last_collision_count = 0
+
         await self.mark_success(parsed.restaurant_id, parsed.polled_at_epoch_ms)
 
         decisions: list[Decision] = []
