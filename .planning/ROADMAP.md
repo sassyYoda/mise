@@ -62,7 +62,7 @@ Plans:
   3. A chaos test that kills the State Machine with `kill -9` between diff and emit produces zero duplicate events on restart — the Layer-1 `SET event:{r}:{d}:{p}:{token} 1 NX EX 1200` idempotency key blocks re-emission, and the source tree contains zero occurrences of two-command `SETNX` + `EXPIRE`.
   4. Confirmed `availability.events` persist to the TimescaleDB `availability_events` hypertable with populated `first_seen_at`, `last_seen_at`, `duration_seconds`, `hours_before_service`, and `day_of_week` columns.
 
-**Plans**: 0/4 plans executed
+**Plans**: 1/4 plans executed
 Plans:
 **Wave 1**
 
