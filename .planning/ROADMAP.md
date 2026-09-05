@@ -92,12 +92,26 @@ Plans:
 **Plans**: 7 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 03-01-resy-parser-event-kernel-PLAN.md — register `parse_resy` in the Phase-2 parser registry and make `banned` a first-class non-success poll status, proving SC5 at the unit tier (wave 1)
 - [ ] 03-02-scheduling-kernel-metrics-redaction-PLAN.md — tier/backoff/rate keys, the atomic 80 rpm budget Lua, the 45 s floor, secret redaction and the single metric definition site (wave 1)
 - [ ] 03-03-resy-config-schema-seed-PLAN.md — migration 0009 `UNIQUE(slug, source)`, the seed YAML field split, the two-row seed gated on `RESY_ENABLED`, the human-gated venue-id resolver, and lazily-read Resy config (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 03-04-browser-harness-fingerprints-stealth-PLAN.md — `make browsers`, the revision-aware Chromium guard, the in-process Resy stub, the coherent fingerprint table and per-context stealth (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 03-05-context-pool-adapter-canary-PLAN.md — `ContextPool`, account/cookie normalisation, `ResyAdapter` calling `/4/find` with no page loads, and the pure soft-ban canary (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 03-06-scheduler-fleet-integration-PLAN.md — registry dispatch, pre-dispatch rate/pause gates, backoff precedence, the ban reaction and fleet pause, concurrent workers and the metrics endpoint (SC3, SC5) (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 03-07-soak-runbooks-docs-PLAN.md — the PERF-05 soak harness with a CI-sized variant, the zombie-browser regression test, both pending-human runbooks and the README rate-limit claim (wave 5)
 
 **UI hint**: no
