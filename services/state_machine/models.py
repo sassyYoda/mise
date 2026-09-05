@@ -99,6 +99,21 @@ class SlotRecord:
     @classmethod
     def from_json(cls, payload: str) -> SlotRecord:
         raw = json.loads(payload)
+        event_id = raw["e"]
+        if event_id is not None:
+            # Validate HERE, at the deserialisation boundary where every other field is
+            # already validated, and not in `DiffEngine._close` where `UUID(record.event_id)`
+            # used to run (WR-08). The pure core claims to perform no I/O and to be total on
+            # its inputs, but that call made it the one place that could raise on the SHAPE of
+            # stored data: one bad character in a hash field — the exact corruption
+            # `RedisStateStore.get_slots` already anticipates for the other fields — raised
+            # ValueError out of `process()`, into `handle_message`'s transient branch, and the
+            # whole poll was retried forever against a record that can never parse.
+            #
+            # Raising here instead means `get_slots` drops the field with its existing
+            # `slot_record_unreadable` warning and the slot re-enters the PENDING cycle, which
+            # is the safe direction and the treatment every other corrupt field already gets.
+            UUID(event_id)
         return cls(
             state=SlotState(raw["s"]),
             token=raw["t"],
@@ -106,7 +121,7 @@ class SlotRecord:
             first_poll_id=raw["p"],
             last_seen_ms=int(raw["l"]),
             confirmed_ms=None if raw["c"] is None else int(raw["c"]),
-            event_id=raw["e"],
+            event_id=event_id,
         )
 
 

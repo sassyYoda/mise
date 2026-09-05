@@ -146,3 +146,63 @@ def test_an_unreadable_stored_state_is_rejected_rather_than_accepted() -> None:
     )
     with pytest.raises(ValueError):
         SlotRecord.from_json(payload)
+
+
+# -- WR-08: a corrupt event_id must be dropped at the boundary, never raised from the core --
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ['"not-a-uuid"', '"6f1b1c62-0000-4000-8000-00000000000"', '""', "42"],
+    ids=["garbage", "truncated", "empty", "number"],
+)
+def test_an_unparseable_event_id_is_rejected_at_the_boundary(stored: str) -> None:
+    """`_close` used to run `UUID(record.event_id)` inside the pure core.
+
+    A single bad character in one hash field then raised out of `DiffEngine.process()`, into
+    `handle_message`'s transient branch — where, since CR-01, it would be rewound and retried
+    forever against a record that can never parse. Validating in `from_json` puts it where
+    every other field is already validated, so `get_slots` drops it with the existing
+    `slot_record_unreadable` warning and the slot re-enters the PENDING cycle.
+    """
+    payload = (
+        '{"s":"AVAILABLE","t":"tok","f":1,"p":"6f1b1c62-0000-4000-8000-000000000001",'
+        f'"l":2,"c":2,"e":{stored}}}'
+    )
+    with pytest.raises((ValueError, TypeError, AttributeError)):
+        SlotRecord.from_json(payload)
+
+
+def test_a_well_formed_event_id_still_round_trips() -> None:
+    """Validation must not become rejection: the ordinary record has to survive."""
+    event_id = "6f1b1c62-0000-4000-8000-000000000002"
+    payload = (
+        '{"s":"AVAILABLE","t":"tok","f":1,"p":"6f1b1c62-0000-4000-8000-000000000001",'
+        f'"l":2,"c":2,"e":"{event_id}"}}'
+    )
+    assert SlotRecord.from_json(payload).event_id == event_id
+
+
+def test_a_corrupt_event_id_is_dropped_by_the_store_not_raised() -> None:
+    """The end-to-end consequence: an unreadable record disappears, the poll survives."""
+    import asyncio
+
+    from services.state_machine.store import RedisStateStore
+
+    class _Redis:
+        async def hgetall(self, key):  # noqa: ANN001, ANN202 - test double
+            return {
+                b"19:00|bar": (
+                    b'{"s":"AVAILABLE","t":"tok","f":1,'
+                    b'"p":"6f1b1c62-0000-4000-8000-000000000001","l":2,"c":2,"e":"broken"}'
+                ),
+                b"20:00|bar": (
+                    b'{"s":"PENDING","t":"tok","f":1,'
+                    b'"p":"6f1b1c62-0000-4000-8000-000000000001","l":2,"c":null,"e":null}'
+                ),
+            }
+
+    store = RedisStateStore(_Redis())  # type: ignore[arg-type]
+    records = asyncio.run(store.get_slots(42, "2026-05-01", 2))
+
+    assert set(records) == {"20:00|bar"}, "the corrupt record must be dropped, not fatal"

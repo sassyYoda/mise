@@ -331,6 +331,10 @@ class DiffEngine:
             # transition still happens, but there is nothing for the shell to close.
             return None
         return Close(
+            # Total, not a parse: `SlotRecord.from_json` validates `event_id` at the
+            # deserialisation boundary (WR-08), so a corrupt field is dropped by
+            # `RedisStateStore.get_slots` and never reaches the core. This call used to be the
+            # ONE place a stored-data shape could raise out of the pure engine.
             event_id=UUID(record.event_id),
             restaurant_id=parsed.restaurant_id,
             date=date,
