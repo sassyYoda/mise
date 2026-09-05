@@ -1,7 +1,8 @@
 """State machine service entry point (D-42, D-43, D-46, D-47a).
 
 Mirrors services/poller/main.py: startup topic guard, every async resource constructed INSIDE
-``run()``, nested try/finally teardown. The construction site matters — ``AIOKafkaConsumer``
+``run()``, and an ``AsyncExitStack`` so a partial startup tears down exactly what it managed to
+acquire. The construction site matters — ``AIOKafkaConsumer``
 calls ``get_running_loop()`` in its constructor and raises if it is built at module import
 time (research B-1).
 
@@ -12,6 +13,7 @@ Startup guard 2: the test-only crash hook is refused outright in prod (T-02-04).
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 
 import redis.asyncio as redis
 from aiokafka.admin import AIOKafkaAdminClient
@@ -73,48 +75,57 @@ async def run() -> None:
     url = redis_url()
     log.info("state_machine_starting")
 
-    r = redis.from_url(url)
-    scheduler = LuaScheduler(r)
-    await scheduler.start()
-
-    # Precondition: all 5 Named-Symbol topics must exist (D-27).
-    await _assert_topics_exist(bootstrap_servers)
-
-    producer = await make_producer(bootstrap_servers)
-    consumer = await make_consumer(
-        "availability.raw",
-        "polls.completed",
-        group_id=CONSUMER_GROUP_ID,
-        bootstrap_servers=bootstrap_servers,
-    )
-
-    durable_store = RedisStateStore(r)
-    buffer = BufferedStateStore(durable_store)
-    engine = DiffEngine(buffer, confirm_delay_ms=CONFIRM_DELAY_MS)
-    state_machine = StateMachineConsumer(
-        consumer=consumer,
-        producer=producer,
-        redis_client=r,
-        scheduler=scheduler,
-        engine=engine,
-        store=durable_store,
-        buffer=buffer,
-    )
-
-    log.info(
-        "state_machine_ready",
-        redis=url,
-        kafka=bootstrap_servers,
-        group_id=CONSUMER_GROUP_ID,
-        confirm_delay_ms=CONFIRM_DELAY_MS,
-    )
-
+    # AsyncExitStack, not a single try/finally at the end: every acquisition below can fail
+    # (a missing topic is the documented `_assert_topics_exist` path), and with one late
+    # try/finally a failure there leaked the Redis connection, and a failure in
+    # `make_consumer` leaked a started producer too. Registering each resource the moment it
+    # exists makes the teardown match the docstring. Unwinding is LIFO — consumer, producer,
+    # Redis — which is the order the previous `finally` used.
     try:
-        await state_machine.run()
+        async with AsyncExitStack() as stack:
+            r = redis.from_url(url)
+            stack.push_async_callback(r.aclose)
+
+            scheduler = LuaScheduler(r)
+            await scheduler.start()
+
+            # Precondition: all 5 Named-Symbol topics must exist (D-27).
+            await _assert_topics_exist(bootstrap_servers)
+
+            producer = await make_producer(bootstrap_servers)
+            stack.push_async_callback(producer.stop)
+
+            consumer = await make_consumer(
+                "availability.raw",
+                "polls.completed",
+                group_id=CONSUMER_GROUP_ID,
+                bootstrap_servers=bootstrap_servers,
+            )
+            stack.push_async_callback(consumer.stop)
+
+            durable_store = RedisStateStore(r)
+            buffer = BufferedStateStore(durable_store)
+            engine = DiffEngine(buffer, confirm_delay_ms=CONFIRM_DELAY_MS)
+            state_machine = StateMachineConsumer(
+                consumer=consumer,
+                producer=producer,
+                redis_client=r,
+                scheduler=scheduler,
+                engine=engine,
+                store=durable_store,
+                buffer=buffer,
+            )
+
+            log.info(
+                "state_machine_ready",
+                redis=url,
+                kafka=bootstrap_servers,
+                group_id=CONSUMER_GROUP_ID,
+                confirm_delay_ms=CONFIRM_DELAY_MS,
+            )
+
+            await state_machine.run()
     finally:
-        await consumer.stop()
-        await producer.stop()
-        await r.aclose()
         log.info("state_machine_stopped")
 
 
