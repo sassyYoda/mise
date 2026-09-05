@@ -178,6 +178,17 @@ class StateMachineConsumer:
                 poll_id=str(parsed.poll_id),
                 count=self.engine.last_close_count,
             )
+        if self.engine.last_collision_count:
+            # Two observed slots landed on one `(time_slot, seat_type)`. The resolution is
+            # deterministic (last parsed wins) and does not change the diff, but it is the
+            # payload-shape surprise the [ASSUMED] OpenTable schema warns about and it would
+            # otherwise vanish without a trace.
+            log.warning(
+                "slot_key_collisions",
+                restaurant_id=parsed.restaurant_id,
+                poll_id=str(parsed.poll_id),
+                count=self.engine.last_collision_count,
+            )
         for decision in decisions:
             await self._apply(decision, parsed.polled_at_epoch_ms)
         await self._flush()

@@ -82,12 +82,19 @@ class DiffEngine:
 
     last_close_count exposes how many Close decisions the most recent process() produced, for
     the mass-closure audit log in the consumer shell (research Pitfall 10).
+
+    last_collision_count exposes how many observed slots the most recent process() collapsed
+    onto an already-seen `(time_slot, seat_type)`. The resolution is deterministic and
+    documented (last parsed wins), but it is exactly the payload-shape surprise the [ASSUMED]
+    OpenTable schema warns about, and it used to disappear without a trace. Both counters are
+    observations only: neither changes a diff outcome, so replay stays byte-identical.
     """
 
     def __init__(self, store: StateStore, confirm_delay_ms: int) -> None:
         self.store = store
         self.confirm_delay_ms = confirm_delay_ms
         self.last_close_count: int = 0
+        self.last_collision_count: int = 0
 
     async def process(self, parsed: ParsedPoll) -> list[Decision]:
         """Diff one normalised poll against stored state and return the decisions to execute."""
@@ -95,6 +102,8 @@ class DiffEngine:
 
         decisions: list[Decision] = []
         seen = _group_by_bucket(parsed.slots)
+        # Counted, not logged: the core stays free of I/O (D-49). The shell reads it.
+        self.last_collision_count = len(parsed.slots) - sum(len(b) for b in seen.values())
         needs_expedite = False
         close_count = 0
 
