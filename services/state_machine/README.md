@@ -210,9 +210,16 @@ would stop being a golden.
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` | Same default as the poller — the two must agree. |
 | `REDIS_URL` | `redis://localhost:6379/0` | Slot state, the emission claim and the scheduler ZSET. |
 | `DATABASE_URL_ASYNC` | `postgresql+asyncpg://mise:mise@localhost:5432/mise` | Analytics writes only; a failure is logged, never fatal. |
-| `CONFIRM_DELAY_MS` | `8000` | Confirmation window. Single source of truth is `shared/redis_keys.py`. |
+| `CONFIRM_DELAY_MS` | — | **Not an environment variable.** The confirmation window is the compile-time constant `shared.redis_keys.CONFIRM_DELAY_MS` (8000 ms); setting it in a shell or a deployment does nothing. Listed here because it used to be documented as tunable. |
 | `ENV` | `dev` | `prod` refuses to start with the crash hook set. |
 | `MISE_CRASH_AFTER` | unset | **TEST ONLY.** SIGKILLs the process after the named stage (`nx_claim`, `kafka_send`, `state_write`, `commit`) so the chaos test can prove crash safety. `main.run()` raises if it is set while `ENV=prod`. |
 
-Every variable is read lazily, inside `run()`, never frozen into a module constant at import
-time — that is what lets an integration test point the service at a container after collection.
+Every variable in the table above (bar the last-but-one row, which is not one) is read lazily,
+inside `run()`, never frozen into a module constant at import time — that is what lets an
+integration test point the service at a container after collection.
+
+The confirmation window is deliberately *not* configurable. `tests/fixtures/raw_streams/*.events.jsonl`
+are byte-for-byte goldens, and a golden whose value depends on the caller's environment is not
+a golden; `scripts/replay_raw.py` therefore compiles the same constant in rather than reading
+it. Changing the window is a source edit in `shared/redis_keys.py`, which regenerates the
+goldens under review — which is the point.
