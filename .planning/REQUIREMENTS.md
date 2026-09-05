@@ -11,14 +11,10 @@ Requirements for MVP (8-week target). Each maps to exactly one roadmap phase.
 
 - [ ] **FOUND-01**: Monorepo scaffolded (services/, frontend/, terraform/, scripts/, .github/workflows/) with Docker Compose stack (Kafka, ZooKeeper or KRaft, Redis, TimescaleDB/PostgreSQL) runnable via `docker compose up`
 - [ ] **FOUND-02**: PostgreSQL + TimescaleDB schema created via Alembic migrations (users, restaurants, watchlist_entries, notification_log, availability_events hypertable, poll_log hypertable)
-- [x] **FOUND-03
-**: Initial NYC restaurant catalog (≥ 50 restaurants) seeded with platform IDs, neighborhood, cuisine, price tier, cover photo
-- [x] **FOUND-04
-**: Kafka topics created (`availability.raw`, `availability.events`, `notifications.queued`, `notifications.sent`, `polls.completed`) with retention policies; single-broker acceptable at MVP
-- [x] **FOUND-05
-**: Twilio A2P 10DLC / toll-free registration submitted on Day 1 of Week 1 (multi-week lead time); domain `mise.place` registered; GCP project + Artifact Registry + secrets manager provisioned
-- [x] **FOUND-06
-**: Manually created pre-authenticated Resy accounts stored as encrypted secrets; VAPID keypair generated; HMAC management-token secret generated
+- [x] **FOUND-03**: Initial NYC restaurant catalog (≥ 50 restaurants) seeded with platform IDs, neighborhood, cuisine, price tier, cover photo
+- [x] **FOUND-04**: Kafka topics created (`availability.raw`, `availability.events`, `notifications.queued`, `notifications.sent`, `polls.completed`) with retention policies; single-broker acceptable at MVP
+- [x] **FOUND-05**: Twilio A2P 10DLC / toll-free registration submitted on Day 1 of Week 1 (multi-week lead time); domain `mise.place` registered; GCP project + Artifact Registry + secrets manager provisioned
+- [x] **FOUND-06**: Manually created pre-authenticated Resy accounts stored as encrypted secrets; VAPID keypair generated; HMAC management-token secret generated
 
 ### Polling Engine
 
@@ -32,11 +28,11 @@ Requirements for MVP (8-week target). Each maps to exactly one roadmap phase.
 
 ### State Machine & Event Pipeline
 
-- [ ] **STATE-01**: Redis availability state set (`avail:{restaurant_id}:{date}:{party_size}`) tracks currently known slot tokens per (restaurant, date, party) with 25-hour TTL
-- [ ] **STATE-02**: State machine consumes `availability.raw`; computes tri-state diff (appeared / disappeared / unchanged) against current Redis state
-- [ ] **STATE-03**: For newly appeared slots, state machine schedules confirmation poll at t+8 seconds via Redis ZSET (not inline `asyncio.sleep`); confirmation poll re-verifies against source, and only confirmed slots emit `availability.events`
-- [ ] **STATE-04**: Emission-layer idempotency — `SET NX EX` on key `event:{rid}:{date}:{party}:{token}` (20-minute TTL) prevents duplicate event emission across consecutive polls and consumer redelivery
-- [ ] **STATE-05**: `availability.events` persist to TimescaleDB `availability_events` hypertable with `first_seen_at`, `last_seen_at`, `duration_seconds`, `hours_before_service`, `day_of_week`
+- [x] **STATE-01**: Redis availability state set (`avail:{restaurant_id}:{date}:{party_size}`) tracks currently known slot tokens per (restaurant, date, party) with 25-hour TTL
+- [x] **STATE-02**: State machine consumes `availability.raw`; computes tri-state diff (appeared / disappeared / unchanged) against current Redis state
+- [x] **STATE-03**: For newly appeared slots, state machine schedules confirmation poll at t+8 seconds via Redis ZSET (not inline `asyncio.sleep`); confirmation poll re-verifies against source, and only confirmed slots emit `availability.events`
+- [x] **STATE-04**: Emission-layer idempotency — `SET NX EX` on key `event:{rid}:{date}:{party}:{token}` (20-minute TTL) prevents duplicate event emission across consecutive polls and consumer redelivery
+- [x] **STATE-05**: `availability.events` persist to TimescaleDB `availability_events` hypertable with `first_seen_at`, `last_seen_at`, `duration_seconds`, `hours_before_service`, `day_of_week`
 - [ ] **STATE-06**: Replay script — given an `availability.raw` Kafka offset range, replays state machine and produces identical `availability.events` output (portfolio artifact)
 
 ### Watchlist & User Management
@@ -155,11 +151,11 @@ Populated by roadmap creation 2026-04-20. All v1 REQ-IDs map to exactly one phas
 | POLL-05 | Phase 3 | Pending |
 | POLL-06 | Phase 3 | Pending |
 | POLL-07 | Phase 1 | Complete (01-05) |
-| STATE-01 | Phase 2 | Pending |
-| STATE-02 | Phase 2 | Pending |
-| STATE-03 | Phase 2 | Pending |
-| STATE-04 | Phase 2 | Pending |
-| STATE-05 | Phase 2 | Pending |
+| STATE-01 | Phase 2 | Complete |
+| STATE-02 | Phase 2 | Complete |
+| STATE-03 | Phase 2 | Complete |
+| STATE-04 | Phase 2 | Complete |
+| STATE-05 | Phase 2 | Complete |
 | STATE-06 | Phase 2 | Pending |
 | WATCH-01 | Phase 5 | Pending |
 | WATCH-02 | Phase 5 | Pending |
@@ -201,6 +197,7 @@ Populated by roadmap creation 2026-04-20. All v1 REQ-IDs map to exactly one phas
 | PERF-05 | Phase 3 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 57 total (note: original REQUIREMENTS.md footer stated 46; actual ID count across all categories is 57 — FOUND:6, POLL:7, STATE:6, WATCH:6, NOTIF:7, PATTERN:3, FE:7, API:3, DEPLOY:7, PERF:5)
 - Mapped to phases: 57 ✓
 - Unmapped: 0 ✓

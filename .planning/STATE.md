@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: State Machine & Event Pipeline
 status: executing
-stopped_at: Completed 02-02-shared-kernel-expedite-schema-PLAN.md
-last_updated: "2026-09-05T05:38:35.925Z"
+stopped_at: Completed 02-03-consumer-shell-persistence-PLAN.md
+last_updated: "2026-09-05T06:07:28.893Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 2 execution started
 progress:
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 2 (State Machine & Event Pipeline) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 2 execution started
 
@@ -63,6 +63,7 @@ Progress: [░░░░░░░░░░] 0%
 |------|----------|-------|-------|
 | Phase 2 P01 | 13 | 3 tasks | 17 files |
 | Phase 2 P2 | 14 | 3 tasks | 14 files |
+| Phase 2 P03 | 25 | 3 tasks | 15 files (13 created, 2 modified) |
 
 ## Accumulated Context
 
@@ -89,6 +90,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 02-02: availability_events.restaurant_id is the SOURCE PLATFORM id, recorded via COMMENT ON COLUMN and an ORM docstring; join key against restaurants is (source, platform_id) (D-52).
 - [Phase ?]: 02-02: services/poller/config.py freezes env vars at import time — integration modules that import poller code must evict services.poller.* from sys.modules on teardown or they silently pin later tests to localhost defaults.
 - [Phase ?]: 02-02: Requirements STATE-01/03/05 left Pending — this plan ships the primitives and schema; the state store, consumer shell and persistence land in 02-03.
+- [Phase ?]: 02-03: BufferedStateStore wraps RedisStateStore so the engine's write-through state updates land AFTER the Kafka send — without it a crash between the engine's write and the send loses the event permanently (D-46, research Pattern 4).
+- [Phase ?]: 02-03: services/state_machine/config.py reads every env var through a function, never a module constant, so the import-time freeze that broke a full-suite run in 02-02 cannot recur.
+- [Phase ?]: 02-03: the chaos test accepts returncode -9 OR 137 — 'uv run' is the direct child and relays a killed grandchild as 128+signal; the plan's literal -9 assertion can never hold.
+- [Phase ?]: 02-03: STATE-01..05 marked Done (store, shell, expedite, SET NX EX claim and persistence all live and chaos-proven end to end); STATE-06 stays Pending for the 02-04 replay script.
 
 ### Pending Todos
 
@@ -116,8 +121,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T05:38:35.919Z
-Stopped at: Completed 02-02-shared-kernel-expedite-schema-PLAN.md
+Last session: 2026-09-05T06:07:19.259Z
+Stopped at: Completed 02-03-consumer-shell-persistence-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
