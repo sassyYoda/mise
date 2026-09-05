@@ -7,6 +7,8 @@ payload shapes; no test invents its own.
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from services.poller.sources.opentable.fixtures import (
@@ -120,19 +122,36 @@ def test_tolerates_missing_and_ragged_fields():
     assert parsed.slots[0].booking_token is None
 
 
-def test_resy_source_is_unsupported_until_phase_three():
-    with pytest.raises(UnsupportedSourceError):
-        parse_raw(_raw(OPENTABLE_SUCCESS_RESPONSE, source="resy"))
+def test_an_unregistered_source_is_unsupported_not_a_crash():
+    """
+    The dispatch fallback in `parse_raw`, exercised by hiding a source that IS registered.
+
+    This test used to assert that `resy` was unsupported "until Phase 3". Phase 3 registered
+    it (D-66), so the assertion had to change or become a lie — but the PROPERTY it was really
+    guarding is still live and still matters: a source present in the `AvailabilityRaw.source`
+    Literal but absent from `PARSER_REGISTRY` must degrade to UNKNOWN rather than raise a
+    KeyError that halts the partition. `AvailabilityRaw` rejects an invented source name at
+    construction, so the only way to reach that branch is to remove a real key.
+    """
+    with patch.dict(PARSER_REGISTRY, clear=False):
+        PARSER_REGISTRY.pop("resy")
+        with pytest.raises(UnsupportedSourceError):
+            parse_raw(_raw(OPENTABLE_SUCCESS_RESPONSE, source="resy"))
 
 
 def test_unsupported_source_error_is_a_parse_error():
     """One `except ParseError` handler covers both failure modes (D-37)."""
     assert issubclass(UnsupportedSourceError, ParseError)
-    with pytest.raises(ParseError):
-        parse_raw(_raw(OPENTABLE_SUCCESS_RESPONSE, source="resy"))
+    # The registry entry must be removed here too. With `resy` registered, `parse_raw` reaches
+    # `parse_resy`, which raises a plain ParseError on this OpenTable body — so the assertion
+    # would pass for a reason that has nothing to do with UnsupportedSourceError.
+    with patch.dict(PARSER_REGISTRY, clear=False):
+        PARSER_REGISTRY.pop("resy")
+        with pytest.raises(ParseError):
+            parse_raw(_raw(OPENTABLE_SUCCESS_RESPONSE, source="resy"))
 
 
-def test_registry_dispatches_opentable_without_the_engine_branching_on_source():
-    assert set(PARSER_REGISTRY) == {"opentable"}
+def test_registry_dispatches_by_source_without_the_engine_branching_on_source():
+    assert sorted(PARSER_REGISTRY) == ["opentable", "resy"]
     assert PARSER_REGISTRY["opentable"] is parse_opentable
     assert parse_raw(_raw(OPENTABLE_SUCCESS_RESPONSE)).source == "opentable"
