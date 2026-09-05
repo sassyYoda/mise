@@ -29,7 +29,10 @@ def effective_coverage(request_params: Mapping[str, Any]) -> frozenset[tuple[str
     services/poller/sources/opentable/adapter.py does not loop. Using the declared list would
     make every party-4 slot "covered and absent" on every poll, closing them all falsely.
 
-    Returns an empty set when either list is empty — an unbounded poll closes nothing.
+    Returns an empty set when either list is empty; `parse_opentable` treats that as a
+    `ParseError` (unbounded coverage is UNKNOWN, not a successful observation of nothing)
+    — see D-39. The old wording, "an unbounded poll closes nothing", described the
+    behaviour before WR-09 and would tell the next caller the empty set is benign.
 
     Raises ParseError for a party size or a date that is present but unusable. `request_params`
     is producer-controlled data, not a validated schema, and a bare `int(parties[0])` raises
