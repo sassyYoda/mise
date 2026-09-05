@@ -6,6 +6,15 @@ after the Kafka send and the Redis state write but before the offset commit — 
 moment in the pipeline. Restarted clean, it re-reads the same offsets and must produce exactly
 one ``availability.events`` record per ``event_id``.
 
+The payload is the SHIPPED fixture, ``seatingTypes: ["bar", "standard"]`` and all — it is NOT
+trimmed to one seating type (WR-05). ``seat_type`` is part of slot identity (D-36), so the
+confirming poll emits TWO slots, and with the crash armed at ``state_write`` the process dies
+after the FIRST slot is durable and before the second is claimed. That is the exact window
+per-slot flushing exists for, and until now every proof of it was a unit test against
+``MemoryStateStore`` and a hand-rolled ``FakeRedis``. Here it runs against real Redis (where
+``flush_slot`` issues a real MULTI/EXEC per slot), a real broker, and a real SIGKILL: one
+event before the crash, both events and both rows after the restart, and no duplicates.
+
 The ``returncode == -SIGKILL`` assertion is load-bearing: without it, a run where the hook never
 fired would pass vacuously.
 """
@@ -17,9 +26,9 @@ import signal
 import subprocess
 import time as _time
 from collections import Counter
-from typing import Any
 from uuid import UUID
 
+import asyncpg
 import pytest
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaConsumer
@@ -43,13 +52,9 @@ JOB = f"opentable:{RID}"
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _single_slot_response() -> dict[str, Any]:
-    """The shipped fixture trimmed to one seating type, so one poll pair means one event."""
-    payload = copy.deepcopy(OPENTABLE_SUCCESS_RESPONSE)
-    payload["data"]["availability"][0]["availability"][0]["timeSlots"][0]["seatingTypes"] = [
-        "standard"
-    ]
-    return payload
+# The shipped fixture, UNTRIMMED: one timeslot fanned out into a "bar" slot and a "standard"
+# slot that share one booking token. Two slot identities, two events, two rows.
+EXPECTED_EVENTS = 2
 
 
 def _raw(polled_at_epoch_ms: int) -> AvailabilityRaw:
@@ -58,7 +63,7 @@ def _raw(polled_at_epoch_ms: int) -> AvailabilityRaw:
         source="opentable",
         restaurant_id=RID,
         polled_at_epoch_ms=polled_at_epoch_ms,
-        raw_response=_single_slot_response(),
+        raw_response=copy.deepcopy(OPENTABLE_SUCCESS_RESPONSE),
         request_params={"rid": RID, "dates": [DATE], "party_sizes": [PARTY]},
     )
 
@@ -153,7 +158,10 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
     )
 
     after_crash = await _drain_events(bootstrap)
-    assert len(after_crash) == 1, "the confirming poll must have emitted before the crash"
+    assert len(after_crash) == 1, (
+        "the crash hook fires after the FIRST slot's per-slot flush, so exactly one of the "
+        f"two slots must be on the wire; got {len(after_crash)}"
+    )
 
     # The offset was never committed, so the same message is still pending redelivery.
     state = await r.hgetall(avail_state_key(RID, DATE, PARTY))
@@ -189,7 +197,9 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
                 for records in batches.values()
                 for m in records
             )
-            assert len(seen) <= 1, f"redelivery emitted a duplicate: {len(seen)} events"
+            assert len(seen) <= EXPECTED_EVENTS, (
+                f"redelivery emitted a duplicate: {len(seen)} events"
+            )
         assert restarted.poll() is None, "the restarted service must stay up without the hook"
     finally:
         await watcher.stop()
@@ -203,5 +213,23 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
     counts = Counter(str(event.event_id) for event in events)
     duplicates = {event_id: n for event_id, n in counts.items() if n > 1}
     assert duplicates == {}, f"redelivery produced duplicate events: {duplicates}"
-    assert len(events) == 1, f"expected exactly one event after the restart, got {len(events)}"
+    assert len(events) == EXPECTED_EVENTS, (
+        f"expected both slots' events after the restart, got {len(events)}"
+    )
+    # The second slot was only ever PENDING in the buffer the SIGKILL destroyed, so its event
+    # exists at all only because the first slot's flush did NOT make it durable (CR-02, iter 1).
+    assert {event.seat_type for event in events} == {"bar", "standard"}
+
+    # ... and both analytics rows survived the crash, not just the events.
+    conn = await asyncpg.connect(db_urls["dsn"])
+    try:
+        rows = await conn.fetch(
+            "SELECT event_id FROM availability_events WHERE event_id = ANY($1::uuid[])",
+            [event.event_id for event in events],
+        )
+    finally:
+        await conn.close()
+    assert len(rows) == EXPECTED_EVENTS, (
+        f"expected one availability_events row per event, got {len(rows)}"
+    )
     await r.aclose()

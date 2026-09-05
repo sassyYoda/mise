@@ -1,11 +1,18 @@
 """Integration: STATE-01..05 — availability.raw becomes availability.events plus a hypertable row.
 
 This is the phase's headline claim (D-51, ROADMAP SC4) proven against live Kafka, Redis 7.2
-and TimescaleDB containers: two polls 9 s apart emit exactly one confirmed event and write
-exactly one analytics row, a third poll that omits the slot closes the row with a
+and TimescaleDB containers: two polls 9 s apart confirm the shipped fixture's slots and write
+one analytics row each, a third poll that omits them closes every row with a
 ``duration_seconds`` and emits nothing, an errored ``polls.completed`` marks the restaurant
 UNKNOWN without touching a slot, and the first sighting pulls the restaurant's next poll
 forward through the ZSET scheduler rather than sleeping (D-43).
+
+The payload is the SHIPPED fixture, ``seatingTypes: ["bar", "standard"]`` and all — it is NOT
+trimmed to one seating type (WR-05). ``seat_type`` is part of slot identity (D-36), so one
+timeslot is two slots sharing one booking token, and the confirming poll emits both. That is
+the multi-slot emit path — a per-slot claim, a per-slot ``send_and_wait``, a per-slot
+MULTI/EXEC flush — and against anything but real Redis and a real broker it was only ever
+exercised by unit tests with a ``FakeRedis`` that implements ``set``.
 
 Every ``polled_at_epoch_ms`` is set explicitly, so the 9 s confirmation window costs no real
 time; nothing in this file waits out a wall-clock delay.
@@ -51,20 +58,14 @@ JOB = f"opentable:{RID}"
 CONFIRM_DELAY_MS = 8_000
 
 
-def _single_slot_response() -> dict[str, Any]:
-    """``OPENTABLE_SUCCESS_RESPONSE`` trimmed to ONE seating type.
+# One timeslot, two seating types, one shared booking token: two slot identities (D-36).
+EXPECTED_SLOTS = 2
+EXPECTED_SEAT_TYPES = {"bar", "standard"}
 
-    The shipped fixture carries ``seatingTypes: ["bar", "standard"]`` and ``seat_type`` is
-    part of slot identity (D-36), so it describes TWO slots and would confirm two events.
-    This test pins the "exactly one event, exactly one row" claim, so it trims to a single
-    seating type. The two-slots-from-one-poll case has its own regression guard in
-    ``tests/integration/test_availability_events_persistence.py`` (research B-3).
-    """
-    payload = copy.deepcopy(OPENTABLE_SUCCESS_RESPONSE)
-    payload["data"]["availability"][0]["availability"][0]["timeSlots"][0]["seatingTypes"] = [
-        "standard"
-    ]
-    return payload
+
+def _success_response() -> dict[str, Any]:
+    """The shipped fixture, untrimmed — deep-copied so no test can mutate the module global."""
+    return copy.deepcopy(OPENTABLE_SUCCESS_RESPONSE)
 
 
 def _raw(response: dict[str, Any], polled_at_epoch_ms: int) -> AvailabilityRaw:
@@ -131,8 +132,8 @@ async def test_raw_polls_become_one_event_one_row_and_a_closure(
     producer = await make_producer(kafka_bootstrap)
     try:
         for raw in (
-            _raw(_single_slot_response(), t0),
-            _raw(_single_slot_response(), confirm_ms),
+            _raw(_success_response(), t0),
+            _raw(_success_response(), confirm_ms),
             _raw(OPENTABLE_EMPTY_RESPONSE, close_ms),
         ):
             await producer.send_and_wait(
@@ -169,7 +170,9 @@ async def test_raw_polls_become_one_event_one_row_and_a_closure(
         finally:
             await conn.close()
         marked = await r.hget(avail_meta_key(RID), "unknown_since_ms")
-        return bool(closed) and marked not in (None, b"", "")
+        # Both slots must be closed, not just the first: waiting on `> 0` would race the
+        # second closure and make every assertion below flaky rather than wrong.
+        return closed == EXPECTED_SLOTS and marked not in (None, b"", "")
 
     try:
         await _await_condition(
@@ -184,7 +187,7 @@ async def test_raw_polls_become_one_event_one_row_and_a_closure(
         except asyncio.CancelledError:
             pass
 
-    # 1. Exactly one confirmed event on the wire, timestamped by the confirming poll.
+    # 1. One confirmed event per slot on the wire, timestamped by the confirming poll.
     consumer = AIOKafkaConsumer(
         "availability.events",
         bootstrap_servers=kafka_bootstrap,
@@ -198,31 +201,46 @@ async def test_raw_polls_become_one_event_one_row_and_a_closure(
     finally:
         await consumer.stop()
 
-    assert len(messages) == 1, f"expected exactly one confirmed event, got {len(messages)}"
-    event = AvailabilityEvent.model_validate_json(messages[0].value)
-    assert event.event_type == "slot_opened"
-    assert event.restaurant_id == RID
-    assert event.time_slot == "19:00"
-    assert event.produced_at_epoch_ms == confirm_ms, "produced_at must be poll time, not wall clock"
-    assert event.first_seen_at_epoch_ms == t0
-    assert messages[0].key is not None and messages[0].key.decode() == JOB
+    assert len(messages) == EXPECTED_SLOTS, (
+        f"expected one confirmed event per seating type, got {len(messages)}"
+    )
+    events = [AvailabilityEvent.model_validate_json(m.value) for m in messages]
+    assert {event.seat_type for event in events} == EXPECTED_SEAT_TYPES
+    assert len({event.event_id for event in events}) == EXPECTED_SLOTS, (
+        "the two slots share one booking token, so a token-only identity collapses them"
+    )
+    assert len({event.booking_token for event in events}) == 1, (
+        "the fixture's whole point: one token, two slot identities"
+    )
+    for event, message in zip(events, messages, strict=True):
+        assert event.event_type == "slot_opened"
+        assert event.restaurant_id == RID
+        assert event.time_slot == "19:00"
+        assert event.produced_at_epoch_ms == confirm_ms, (
+            "produced_at must be poll time, not wall clock"
+        )
+        assert event.first_seen_at_epoch_ms == t0
+        assert message.key is not None and message.key.decode() == JOB
 
-    # 2. Exactly one analytics row, fully populated, and closed by the third poll.
+    # 2. One analytics row per event, fully populated, and closed by the third poll.
     conn = await asyncpg.connect(db_urls["dsn"])
     try:
         rows = await conn.fetch(
-            "SELECT * FROM availability_events WHERE event_id = $1", event.event_id
+            "SELECT * FROM availability_events WHERE event_id = ANY($1::uuid[])",
+            [event.event_id for event in events],
         )
     finally:
         await conn.close()
-    assert len(rows) == 1, f"expected exactly one hypertable row, got {len(rows)}"
-    row = rows[0]
-    assert row["restaurant_id"] == RID
-    assert row["first_seen_at"] is not None
-    assert row["last_seen_at"] is not None
-    assert row["hours_before_service"] is not None
-    assert row["day_of_week"] is not None
-    assert row["duration_seconds"] == 20, "close must stamp last_seen_at - first_seen_at"
+    assert len(rows) == EXPECTED_SLOTS, (
+        f"expected one hypertable row per event, got {len(rows)}"
+    )
+    for row in rows:
+        assert row["restaurant_id"] == RID
+        assert row["first_seen_at"] is not None
+        assert row["last_seen_at"] is not None
+        assert row["hours_before_service"] is not None
+        assert row["day_of_week"] is not None
+        assert row["duration_seconds"] == 20, "close must stamp last_seen_at - first_seen_at"
 
     # 3. The first sighting expedited the restaurant's next poll to first_poll + 8 s (D-43).
     score = await r.zscore(SCHED_POLLS, JOB)
