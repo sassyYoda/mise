@@ -4,6 +4,7 @@ Carries standing regression guards for two blocking corrections reproduced in re
 B-2 (a unique index on a hypertable must include the partitioning column ``time``) and
 B-3 (a PK of ``(time, restaurant_id)`` collides when one poll confirms two slots).
 """
+import contextlib
 import os
 import subprocess
 import uuid
@@ -251,9 +252,14 @@ async def test_a_non_empty_table_is_refused_not_deleted(db_urls):
             )
             assert survivors == 1, "the migration deleted a row it was refusing to migrate"
         finally:
-            await conn.execute(
-                'DELETE FROM availability_events WHERE "time" = $1', legacy_time
-            )
+            # suppress(Exception) around the cleanup (IN-06): if the failure that reached this
+            # finally was itself a connection failure, an unguarded DELETE raises and REPLACES
+            # the original AssertionError — the same buried-failure problem WR-07 fixed one
+            # level up. The close is still unconditional.
+            with contextlib.suppress(Exception):
+                await conn.execute(
+                    'DELETE FROM availability_events WHERE "time" = $1', legacy_time
+                )
             await conn.close()
     finally:
         # Restore the module's schema for anything that runs after this test.

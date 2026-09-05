@@ -176,6 +176,16 @@ offset advances, because retry accounting that leaked across messages would supp
 later emit. Guarded by `tests/unit/test_retry_cap_and_dlq.py`, which drives `run()` over the
 two-slot payload and asserts the retry sends the remaining slot **only**.
 
+## Deploy note: the claim-key reshape (IN-02)
+
+`event_idempotency_key` percent-escapes its components as of review iteration 2, so claims
+written by an older build (`event:42:2026-05-01:2:19:00|bar:tok1`) are not found by a newer one
+(`event:42:2026-05-01:2:19%3A00%7Cbar:tok1`). For the 20 minutes of
+`EVENT_IDEMPOTENCY_TTL_SECONDS` after a rollout, every in-flight claim misses and Layer-1
+suppression is off. The `event_id` is unchanged, so Phase 4's Layer-2 key still dedupes the
+notification — but `availability.events` will show duplicates for that window. It is
+self-healing and needs no action; it is written down so nobody spends an afternoon on it.
+
 ## Redis keys
 
 All key patterns and TTLs are declared in `shared/redis_keys.py` — never inline a key string

@@ -47,28 +47,36 @@ async def run_until_signal(main: Awaitable[object]) -> None:
     stop = asyncio.Event()
 
     installed: list[signal.Signals] = []
-    for sig in SHUTDOWN_SIGNALS:
-        try:
-            loop.add_signal_handler(sig, stop.set)
-        except (NotImplementedError, RuntimeError, ValueError):  # pragma: no cover
-            continue
-        installed.append(sig)
-
-    # ensure_future, not create_task: the poller hands in an `asyncio.gather(...)` future
-    # rather than a bare coroutine, and cancelling that future cancels its children.
-    runner: asyncio.Future[Any] = asyncio.ensure_future(main)
-    waiter: asyncio.Future[Any] = asyncio.ensure_future(stop.wait())
+    # Everything from the first `add_signal_handler` onward is inside the try whose finally
+    # removes them (IN-05). It used to start two statements later, so if `ensure_future(main)`
+    # raised — a non-awaitable `main` is the one way that is reachable — SIGTERM and SIGINT
+    # stayed bound to `stop.set` for the rest of the process, silently disarming the default
+    # disposition of both.
+    runner: asyncio.Future[Any] | None = None
+    waiter: asyncio.Future[Any] | None = None
     try:
+        for sig in SHUTDOWN_SIGNALS:
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except (NotImplementedError, RuntimeError, ValueError):  # pragma: no cover
+                continue
+            installed.append(sig)
+
+        # ensure_future, not create_task: the poller hands in an `asyncio.gather(...)` future
+        # rather than a bare coroutine, and cancelling that future cancels its children.
+        runner = asyncio.ensure_future(main)
+        waiter = asyncio.ensure_future(stop.wait())
         await asyncio.wait({runner, waiter}, return_when=asyncio.FIRST_COMPLETED)
         if runner.done():
             await runner  # re-raise whatever ended it
             return
         log.info("shutdown_signal_received")
     finally:
-        waiter.cancel()
-        with suppress(asyncio.CancelledError):
-            await waiter
-        if not runner.done():
+        if waiter is not None:
+            waiter.cancel()
+            with suppress(asyncio.CancelledError):
+                await waiter
+        if runner is not None and not runner.done():
             # Also the path taken when the CALLER is cancelled: the inner task must never be
             # left running against resources the exit stack is about to close.
             runner.cancel()

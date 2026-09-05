@@ -96,6 +96,12 @@ def _failure_shape(exc: BaseException) -> list[str] | str:
     So: for a `ValidationError`, the field path and the error TYPE of each error, which is
     everything needed to diagnose a schema mismatch and contains no input. For anything else,
     the exception's dotted type name.
+
+    DEPENDENCY (IN-01): `error['loc']` is payload-free only because `AvailabilityRaw`'s
+    `raw_response` and `request_params` are `dict[str, Any]`, which produces no nested errors.
+    If either is ever tightened to a real model, `loc` will start carrying payload-supplied
+    dict keys and this redaction silently weakens — cap the rendered path to `error['loc'][0]`
+    in the same commit that tightens the schema.
     """
     if isinstance(exc, ValidationError):
         return [
@@ -154,7 +160,12 @@ class StateMachineConsumer:
         # When present, the engine's writes are buffered and land where D-46 puts the state
         # write: after the broker has acked. See BufferedStateStore for why that matters.
         self.buffer = buffer
-        # Pending `resume` timers, one per rewound partition (see `_retry_later`).
+        # Pending `resume` timers, one per rewound partition (see `_retry_later`). Entries are
+        # removed when the timer fires or in `run()`'s finally, so a partition revoked by a
+        # rebalance between the pause and the timer leaves its key here until the callback
+        # no-ops. That is bounded by the ASSIGNMENT SIZE, not by traffic, so it is tidiness
+        # rather than a leak (IN-04) — a `ConsumerRebalanceListener` would be the fix if the
+        # partition count ever stopped being 1.
         self._resume_handles: dict[TopicPartition, asyncio.TimerHandle] = {}
         # Retry accounting for the message currently at the head of a partition (CR-01). Only
         # ONE message can be under retry at a time — the rewind makes the failed offset the

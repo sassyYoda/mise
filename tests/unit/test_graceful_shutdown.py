@@ -123,3 +123,26 @@ def test_both_entry_points_install_the_shutdown_handler(entry_point: str) -> Non
     assert "run_until_signal(" in source, (
         f"{entry_point} no longer awaits run_until_signal, so SIGTERM kills it outright"
     )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="add_signal_handler is a Unix event-loop feature"
+)
+@pytest.mark.asyncio
+async def test_the_handlers_are_removed_even_if_the_runner_cannot_be_created() -> None:
+    """IN-05: the handlers used to be installed OUTSIDE the try whose finally removes them.
+
+    `asyncio.ensure_future(main)` raises for a non-awaitable `main` — the one way this is
+    reachable — and SIGTERM/SIGINT then stayed bound to `stop.set` for the rest of the
+    process, silently disarming the default disposition of both. Every test above covers only
+    the happy path, which is why this survived.
+    """
+    loop = asyncio.get_running_loop()
+
+    with pytest.raises(TypeError):
+        await run_until_signal("not a coroutine")  # type: ignore[arg-type]
+
+    assert loop.remove_signal_handler(signal.SIGTERM) is False, (
+        "SIGTERM stayed bound to the shutdown event after a failed start"
+    )
+    assert loop.remove_signal_handler(signal.SIGINT) is False
