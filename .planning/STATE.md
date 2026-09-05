@@ -2,19 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Foundation, Admin Pre-conditions & OpenTable Polling
-status: phase-verified-pending-human
+current_phase: 2
+current_phase_name: State Machine & Event Pipeline
+status: executing
 stopped_at: Phase 01 verified PASS-PENDING-HUMAN — 6/10 reqs DONE, 4/10 awaiting human gates (Twilio, domain, GCP, Resy, DevTools spike, 24h PERF-02)
-last_updated: "2026-09-05T05:10:22.617Z"
-last_activity: 2026-04-22
-last_activity_desc: Phase 01 autonomous execution complete; VERIFICATION.md committed
+last_updated: "2026-09-05T05:10:22.760Z"
+last_activity: 2026-09-05
+last_activity_desc: Phase 2 execution started
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 0
   total_plans: 10
-  completed_plans: 6
-  percent: 100
+  completed_plans: 0
 ---
 
 # Project State
@@ -24,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-20)
 
 **Core value:** When a coveted table opens, the watching user is notified fast enough to actually book it — p95 detection-to-notification latency <= 60 seconds.
-**Current focus:** Phase 1 — Foundation, Admin Pre-conditions & OpenTable Polling
+**Current focus:** Phase 2 — State Machine & Event Pipeline
 
 ## Current Position
 
-Phase: 1 of 7 (Foundation, Admin Pre-conditions & OpenTable Polling)
-Plan: 6 of 6 complete (autonomous portion)
-Status: Phase verified PASS-PENDING-HUMAN — autonomous code complete; 6 human gates open (see blockers)
-Last activity: 2026-04-22 — Phase 01 autonomous execution complete; VERIFICATION.md committed
+Phase: 2 (State Machine & Event Pipeline) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 2
+Last activity: 2026-09-05 — Phase 2 execution started
 
 Progress: [██████████] 100%
 
