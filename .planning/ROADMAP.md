@@ -72,7 +72,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 02-03-consumer-shell-persistence-PLAN.md — Wave 2 — RedisStateStore, TimescaleDB persistence, crash-safe Kafka consumer shell, service entry point
-- [ ] 02-04-replay-determinism-PLAN.md — Wave 2 — scripts/replay_raw.py, golden raw/event fixtures, byte-identity and zero-false-event proofs
+- [x] 02-04-replay-determinism-PLAN.md — Wave 2 — scripts/replay_raw.py, golden raw/event fixtures, byte-identity and zero-false-event proofs
 
 **UI hint**: no
 
@@ -165,7 +165,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
-| 2. State Machine & Event Pipeline | 3/4 | In progress | - |
+| 2. State Machine & Event Pipeline | 4/4 | In progress | - |
 | 3. Resy & Playwright Fleet | 0/TBD | Not started | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |

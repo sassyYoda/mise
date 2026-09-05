@@ -33,7 +33,7 @@ Requirements for MVP (8-week target). Each maps to exactly one roadmap phase.
 - [x] **STATE-03**: For newly appeared slots, state machine schedules confirmation poll at t+8 seconds via Redis ZSET (not inline `asyncio.sleep`); confirmation poll re-verifies against source, and only confirmed slots emit `availability.events`
 - [x] **STATE-04**: Emission-layer idempotency — `SET NX EX` on key `event:{rid}:{date}:{party}:{token}` (20-minute TTL) prevents duplicate event emission across consecutive polls and consumer redelivery
 - [x] **STATE-05**: `availability.events` persist to TimescaleDB `availability_events` hypertable with `first_seen_at`, `last_seen_at`, `duration_seconds`, `hours_before_service`, `day_of_week`
-- [ ] **STATE-06**: Replay script — given an `availability.raw` Kafka offset range, replays state machine and produces identical `availability.events` output (portfolio artifact)
+- [x] **STATE-06**: Replay script — given an `availability.raw` Kafka offset range, replays state machine and produces identical `availability.events` output (portfolio artifact)
 
 ### Watchlist & User Management
 
@@ -156,7 +156,7 @@ Populated by roadmap creation 2026-04-20. All v1 REQ-IDs map to exactly one phas
 | STATE-03 | Phase 2 | Complete |
 | STATE-04 | Phase 2 | Complete |
 | STATE-05 | Phase 2 | Complete |
-| STATE-06 | Phase 2 | Pending |
+| STATE-06 | Phase 2 | Complete |
 | WATCH-01 | Phase 5 | Pending |
 | WATCH-02 | Phase 5 | Pending |
 | WATCH-03 | Phase 5 | Pending |

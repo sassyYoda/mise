@@ -4,9 +4,9 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 2
 current_phase_name: State Machine & Event Pipeline
-status: executing
-stopped_at: Completed 02-03-consumer-shell-persistence-PLAN.md
-last_updated: "2026-09-05T06:07:28.893Z"
+status: verifying
+stopped_at: Completed 02-04-replay-determinism-PLAN.md
+last_updated: "2026-09-05T06:27:58.140Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 2 execution started
 progress:
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 
 Phase: 2 (State Machine & Event Pipeline) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-05 — Phase 2 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -64,6 +64,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 2 P01 | 13 | 3 tasks | 17 files |
 | Phase 2 P2 | 14 | 3 tasks | 14 files |
 | Phase 2 P03 | 25 | 3 tasks | 15 files (13 created, 2 modified) |
+| Phase 2 P04 | 11 | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 02-03: services/state_machine/config.py reads every env var through a function, never a module constant, so the import-time freeze that broke a full-suite run in 02-02 cannot recur.
 - [Phase ?]: 02-03: the chaos test accepts returncode -9 OR 137 — 'uv run' is the direct child and relays a killed grandchild as 128+signal; the plan's literal -9 assertion can never hold.
 - [Phase ?]: 02-03: STATE-01..05 marked Done (store, shell, expedite, SET NX EX claim and persistence all live and chaos-proven end to end); STATE-06 stays Pending for the 02-04 replay script.
+- [Phase ?]: 02-04: replay determinism is proven by committed golden files - two replays of a fixture must be byte-identical to each other AND to the golden, so any drift in NAMESPACE_MISE, the event_id recipe or AvailabilityEvent field order fails CI as a reviewable diff.
+- [Phase ?]: 02-04: the replay script reads confirm_delay_ms from the compiled-in DEFAULT_CONFIRM_DELAY_MS, never from the environment - a golden whose bytes depended on the caller's CONFIRM_DELAY_MS would not be a golden.
+- [Phase ?]: 02-04: offset-range replay uses group_id=None with assign+seek and never subscribe, proven against a live broker to leave the state-machine group's committed offset unchanged (T-02-06); --to-offset is EXCLUSIVE (D-55).
+- [Phase ?]: 02-04: shared/telemetry.py sends stdlib logging to sys.stdout at DEBUG outside prod - any CLI whose stdout is data must redirect root handlers to stderr first, or piping it to a file produces a corrupt artifact.
 
 ### Pending Todos
 
@@ -121,8 +126,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T06:07:19.259Z
-Stopped at: Completed 02-03-consumer-shell-persistence-PLAN.md
+Last session: 2026-09-05T06:27:58.134Z
+Stopped at: Completed 02-04-replay-determinism-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
