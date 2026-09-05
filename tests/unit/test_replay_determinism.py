@@ -292,9 +292,20 @@ def test_the_env_example_documents_the_confirmation_window_and_the_crash_hook() 
     )
 
     crash_index = lines.index("MISE_CRASH_AFTER=")
-    banner = "\n".join(lines[max(0, crash_index - 4) : crash_index])
+    banner = "\n".join(lines[max(0, crash_index - 6) : crash_index])
     assert "TEST ONLY" in banner
     assert "must be unset" in banner
+
+    # WR-06: the banner used to say the hook is refused "when ENV=prod", which is the
+    # DENYLIST that WR-13 replaced with an allowlist. An operator reading only this file
+    # would have concluded ENV=staging is a supported way to run with a SIGKILL hook armed.
+    # Documentation about a safety interlock is the worst place to describe the old rule.
+    assert "ENV=prod" not in banner, (
+        "the interlock is an allowlist, not a denylist: naming ENV=prod implies every other "
+        "value is accepted"
+    )
+    for allowed in ("dev", "test", "ci", "local"):
+        assert allowed in banner, f"the banner must name the {allowed!r} allowlist entry"
 
 
 # -- WR-12: a malformed or tombstoned record must honour the exit-code contract --
