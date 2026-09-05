@@ -79,15 +79,21 @@ def _is_observed(entry: Mapping[str, Any]) -> bool:
     return isinstance(status, int) and not isinstance(status, bool) and status == _OBSERVED_STATUS
 
 
-def _results(entry: Mapping[str, Any]) -> Mapping[str, Any]:
+def _venues(entry: Mapping[str, Any]) -> list[Any]:
     """
-    The `results` mapping of one OBSERVED entry, or `ParseError`.
+    The `results.venues` list of one OBSERVED entry, or `ParseError`.
 
-    This is the poll-level unusability boundary. A 200 whose body is not a mapping, or which
-    carries no `results` key, or whose `results` is the wrong type, is a response the parser
-    cannot read — and a response it cannot read is NOT an observation of zero availability. The
-    difference matters enormously: the first is UNKNOWN (closes nothing), the second closes
-    every slot in coverage.
+    This is the poll-level unusability boundary, and every check here is the difference between
+    two outcomes that are NOT close: an unreadable body is UNKNOWN and closes nothing, while a
+    readable body with no availability closes every slot in coverage. Guessing wrong in the
+    second direction wipes a restaurant's entire slot state on the strength of a response
+    nobody has verified.
+
+    `venues` must be a LIST specifically. `venues: []` is a real observation — a fully booked
+    venue — but `results` carrying no `venues` key at all, or a `venues` of some other type, is
+    a shape this parser has never seen. The `[ASSUMED]` schema (research A1) is exactly the
+    kind of thing that turns out to be wrong in production, so the unrecognised case takes the
+    recoverable path.
     """
     body = entry.get("body")
     if not isinstance(body, Mapping):
@@ -97,7 +103,10 @@ def _results(entry: Mapping[str, Any]) -> Mapping[str, Any]:
     results = body.get("results")
     if not isinstance(results, Mapping):
         raise ParseError(f"results is not a mapping (got {type(results).__name__})")
-    return results
+    venues = results.get("venues")
+    if not isinstance(venues, list):
+        raise ParseError(f"results.venues is not a list (got {type(venues).__name__})")
+    return venues
 
 
 def envelope_coverage(payload: Any) -> tuple[frozenset[tuple[str, int]], list[Mapping[str, Any]]]:
@@ -204,9 +213,7 @@ def parse_resy(raw: AvailabilityRaw) -> ParsedPoll:
         if pair is None:  # pragma: no cover - envelope_coverage already filtered these out
             continue
         date, party_size = pair
-        results = _results(entry)
-        venues = results.get("venues")
-        for venue in venues if isinstance(venues, list) else []:
+        for venue in _venues(entry):
             if not isinstance(venue, Mapping):
                 skipped += 1
                 continue

@@ -19,6 +19,7 @@ Bodies are the `body` value of ONE D-64 envelope entry — the envelope itself
 
 Named symbols: RESY_SUCCESS_RESPONSE, RESY_EMPTY_VENUES_RESPONSE,
 RESY_MISSING_RESULTS_RESPONSE, RESY_RESULTS_NOT_A_MAPPING_RESPONSE,
+RESY_RESULTS_WITHOUT_VENUES_RESPONSE,
 RESY_MALFORMED_SLOTS_RESPONSE, RESY_DUPLICATE_SLOT_RESPONSE, RESY_RATE_LIMIT_RESPONSE,
 RESY_CHALLENGE_HTML, RESY_FIXTURE_VENUE_ID
 """
@@ -90,6 +91,11 @@ RESY_MISSING_RESULTS_RESPONSE: dict[str, Any] = {"tally": {"total": 0}}
 # `results` present but the wrong TYPE. Kept as a named fixture rather than inlined in a test
 # so the parser matrix never invents its own payload shape.
 RESY_RESULTS_NOT_A_MAPPING_RESPONSE: dict[str, Any] = {"results": []}
+
+# `results` is a mapping but carries no `venues` list. NOT the same thing as `venues: []`: this
+# is a body shape nobody has verified, so the parser takes the UNKNOWN path rather than
+# reporting a zero-slot observation that would close every covered slot.
+RESY_RESULTS_WITHOUT_VENUES_RESPONSE: dict[str, Any] = {"results": {"tally": {"total": 0}}}
 
 # One usable slot surrounded by four unusable ones. Each bad entry exercises a different
 # per-slot type guard, and the parser must `continue` past all four rather than raise: one
