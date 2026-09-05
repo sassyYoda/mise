@@ -5,14 +5,14 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Resy & Playwright Fleet
 status: executing
-stopped_at: Completed 02-04-replay-determinism-PLAN.md
-last_updated: "2026-09-05T08:25:49.800Z"
+stopped_at: Completed 03-01-resy-parser-event-kernel-PLAN.md
+last_updated: "2026-09-05T08:44:06.022Z"
 last_activity: 2026-09-05
-last_activity_desc: Phase 3 execution started
+last_activity_desc: 03-01 complete — parse_resy registered, banned is a non-success status
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 0
-  total_plans: 17
+  total_plans: 21
   completed_plans: 0
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 3 (Resy & Playwright Fleet) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 3
-Last activity: 2026-09-05 — Phase 3 execution started
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-09-05 — 03-01 complete (parse_resy registered, SC5 proven at the unit tier)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -38,7 +38,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -66,6 +66,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 2 P2 | 14 | 3 tasks | 14 files |
 | Phase 2 P03 | 25 | 3 tasks | 15 files (13 created, 2 modified) |
 | Phase 2 P04 | 11 | 3 tasks | 13 files |
+| Phase 3 P01 | 18 | 3 tasks | 14 (7 created, 8 modified) files |
 
 ## Accumulated Context
 
@@ -100,6 +101,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 02-04: the replay script reads confirm_delay_ms from the compiled-in DEFAULT_CONFIRM_DELAY_MS, never from the environment - a golden whose bytes depended on the caller's CONFIRM_DELAY_MS would not be a golden.
 - [Phase ?]: 02-04: offset-range replay uses group_id=None with assign+seek and never subscribe, proven against a live broker to leave the state-machine group's committed offset unchanged (T-02-06); --to-offset is EXCLUSIVE (D-55).
 - [Phase ?]: 02-04: shared/telemetry.py sends stdlib logging to sys.stdout at DEBUG outside prod - any CLI whose stdout is data must redirect root handlers to stderr first, or piping it to a file produces a corrupt artifact.
+- [Phase ?]: 03-01: Resy coverage is derived from the D-64 envelope's status-200 entries, never from request_params — a rate-limited date can never be reported as observed-and-empty and close every real slot on it (T-03-04, the OpenTable B-4 defect class fixed for Resy from day one).
+- [Phase ?]: 03-01: parse_resy is two-tier — poll-level unusability raises ParseError (UNKNOWN, closes nothing), per-slot type defects continue; results.venues must be a LIST, because an unrecognised body treated as a zero-slot observation would close every covered slot on unverified evidence.
+- [Phase ?]: 03-01: both non-success consumers branch on status == 'success', not on membership in FAILED_POLL_STATUSES — an allowlist of failures is what created the B-7 bug and would re-create it one status at a time; a schema test keeps the frozenset and the Literal in lockstep (D-67a).
+- [Phase ?]: 03-01: SC5 proven at the unit tier — engine.py is byte-for-byte unchanged, PARSER_REGISTRY gained exactly one key, and a source scan matches quoted registry-key LITERALS (not prose, since engine.py's docstring already names OpenTable).
 
 ### Pending Todos
 
@@ -129,8 +134,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T06:27:58.134Z
-Stopped at: Completed 02-04-replay-determinism-PLAN.md
+Last session: 2026-09-05T08:43:57.799Z
+Stopped at: Completed 03-01-resy-parser-event-kernel-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
