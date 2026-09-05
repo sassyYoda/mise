@@ -2,11 +2,15 @@
 Single source of truth for ALL Redis key patterns and TTLs (D-18).
 Any Redis access in services/ MUST import from here.
 Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT, sched_expedite_key,
-               CONFIRM_DELAY_MS, EXPEDITE_FLAG_TTL_SECONDS, EXPEDITE_POLL_LUA
+               CONFIRM_DELAY_MS, EXPEDITE_FLAG_TTL_SECONDS, EXPEDITE_POLL_LUA,
+               avail_state_key, avail_meta_key, event_idempotency_key,
+               AVAIL_STATE_TTL_SECONDS, EVENT_IDEMPOTENCY_TTL_SECONDS,
+               hset_slot, hgetall_slots, hdel_slot, hset_meta, expire_key
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Mapping
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -35,6 +39,63 @@ async def set_nx_ex(r: Redis, key: str, value: str, ttl_seconds: int) -> bool:
     """
     result = await r.set(key, value, nx=True, ex=ttl_seconds)
     return result is True
+
+
+# -- Availability state (D-40, D-42, STATE-01) --
+# TTL is KEY-level, not per-field: per-field hash TTL (HEXPIRE) is a Redis 7.4
+# SERVER feature and the pinned server is redis:7.2-alpine, which answers
+# "ERR unknown command 'HEXPIRE'". The key TTL must therefore be refreshed on
+# every write (D-40, research Pitfall 6).
+AVAIL_STATE_TTL_SECONDS: int = 90_000        # 25 h — one full service day plus slack
+EVENT_IDEMPOTENCY_TTL_SECONDS: int = 1_200   # 20 min — Layer-1 duplicate suppression (D-46)
+
+
+def avail_state_key(restaurant_id: int, date: str, party_size: int) -> str:
+    """Return the HASH key holding known slot records for one (rid, date, party) (D-40)."""
+    return f"avail:{restaurant_id}:{date}:{party_size}"
+
+
+def avail_meta_key(restaurant_id: int) -> str:
+    """Return the HASH key holding per-restaurant state-machine metadata (D-40)."""
+    return f"avail:{restaurant_id}:meta"
+
+
+def event_idempotency_key(restaurant_id: int, date: str, party_size: int, token: str) -> str:
+    """Return the SET NX EX claim key for one emitted event (D-46, STATE-04)."""
+    return f"event:{restaurant_id}:{date}:{party_size}:{token}"
+
+
+# -- Typed HASH helpers (D-42, research Pitfall 3) --
+# redis-py types command methods as `Union[Awaitable[T], T]`, which `mypy --strict`
+# refuses to `await` when T is concrete. Every cast lives here, exactly once, so
+# services/state_machine/store.py contains none. Never suppress these awaits with a
+# blanket type-suppression comment — that would hide real signature drift on a
+# future redis-py bump.
+
+
+async def hset_slot(r: Redis, key: str, field: str, value: str) -> int:
+    """HSET one slot record. Returns 1 if the field is new, 0 if it was updated."""
+    return await cast(Awaitable[int], r.hset(key, field, value))
+
+
+async def hgetall_slots(r: Redis, key: str) -> dict[bytes, bytes]:
+    """HGETALL every slot record under ``key``. Returns {} when the key is absent."""
+    return await cast(Awaitable[dict[bytes, bytes]], r.hgetall(key))
+
+
+async def hdel_slot(r: Redis, key: str, field: str) -> int:
+    """HDEL one slot record. Returns the number of fields removed (0 or 1)."""
+    return await cast(Awaitable[int], r.hdel(key, field))
+
+
+async def hset_meta(r: Redis, key: str, mapping: Mapping[str, str]) -> int:
+    """HSET a whole metadata mapping in one call. Returns the number of new fields."""
+    return await cast(Awaitable[int], r.hset(key, mapping=dict(mapping)))
+
+
+async def expire_key(r: Redis, key: str, ttl_seconds: int) -> bool:
+    """EXPIRE the whole key — the only TTL mechanism available on Redis 7.2."""
+    return bool(await r.expire(key, ttl_seconds))
 
 
 # -- Confirmation expedite (D-43, STATE-03) --
