@@ -161,9 +161,20 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
 
     # 2. Restart clean. The redelivered message must not produce a second event.
     restarted = _launch(base_env)
+    # ONE consumer for the whole observation window, reading from the beginning and
+    # accumulating. The previous shape called _drain_events in a tight loop, and that helper
+    # returns as soon as any record is available — so the loop spun, created tens of throwaway
+    # consumer groups, and hammered the broker for 45 s. A single getmany with a 1 s timeout
+    # paces the loop by itself and needs no sleep (IN-06).
+    watcher = AIOKafkaConsumer(
+        "availability.events",
+        bootstrap_servers=bootstrap,
+        auto_offset_reset="earliest",
+        group_id=f"chaos-watch-{_time.time_ns()}",
+    )
+    await watcher.start()
     try:
-        # Watch for ~45 s while the restarted service reprocesses the uncommitted offset. Each
-        # drain reads the whole topic from the beginning, so a second copy would show up here.
+        seen: list[AvailabilityEvent] = []
         observation_end = _time.monotonic() + 45
         while _time.monotonic() < observation_end:
             if restarted.poll() is not None:
@@ -172,10 +183,16 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
                     f"restarted service exited with {restarted.returncode}; "
                     f"stderr={stderr.decode()[-2000:]!r}"
                 )
-            seen = await _drain_events(bootstrap)
+            batches = await watcher.getmany(timeout_ms=1_000, max_records=100)
+            seen.extend(
+                AvailabilityEvent.model_validate_json(m.value)
+                for records in batches.values()
+                for m in records
+            )
             assert len(seen) <= 1, f"redelivery emitted a duplicate: {len(seen)} events"
         assert restarted.poll() is None, "the restarted service must stay up without the hook"
     finally:
+        await watcher.stop()
         restarted.terminate()
         try:
             restarted.wait(timeout=30)
