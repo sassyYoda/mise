@@ -24,11 +24,10 @@ from shared.redis_keys import (
     AVAIL_STATE_TTL_SECONDS,
     avail_meta_key,
     avail_state_key,
-    expire_key,
-    hdel_slot,
+    hdel_slot_with_ttl,
     hgetall_slots,
-    hset_meta,
-    hset_slot,
+    hset_meta_with_ttl,
+    hset_slot_with_ttl,
 )
 from shared.telemetry import get_logger
 
@@ -95,9 +94,12 @@ class RedisStateStore:
     Production StateStore over one HASH per `(restaurant, date, party)` plus a meta HASH (D-40).
 
     Every mutating call refreshes the whole key's 25-hour TTL, which is the only expiry
-    mechanism the pinned Redis 7.2 server offers. Removing the last field of a HASH deletes the
-    key naturally; an EXPIRE against an absent key is a no-op returning 0, so that case needs no
-    special handling.
+    mechanism the pinned Redis 7.2 server offers — and it does so in the SAME transaction as
+    the mutation. A HSET followed by a separate EXPIRE is the non-atomic shape this repo bans
+    for SETNX+EXPIRE (Pitfall 7): dying between the two while the key is being created leaves a
+    hash with no TTL that never expires, and it doubles the round trips on the hot path.
+    Removing the last field of a HASH deletes the key naturally; an EXPIRE against an absent
+    key is a no-op returning 0, so that case needs no special handling.
     """
 
     def __init__(self, client: redis.Redis) -> None:
@@ -117,14 +119,14 @@ class RedisStateStore:
         return records
 
     async def put_slot(self, rid: int, date: str, party: int, key: str, rec: SlotRecord) -> None:
-        state_key = avail_state_key(rid, date, party)
-        await hset_slot(self.r, state_key, key, rec.to_json())
-        await expire_key(self.r, state_key, AVAIL_STATE_TTL_SECONDS)
+        await hset_slot_with_ttl(
+            self.r, avail_state_key(rid, date, party), key, rec.to_json(), AVAIL_STATE_TTL_SECONDS
+        )
 
     async def drop_slot(self, rid: int, date: str, party: int, key: str) -> None:
-        state_key = avail_state_key(rid, date, party)
-        await hdel_slot(self.r, state_key, key)
-        await expire_key(self.r, state_key, AVAIL_STATE_TTL_SECONDS)
+        await hdel_slot_with_ttl(
+            self.r, avail_state_key(rid, date, party), key, AVAIL_STATE_TTL_SECONDS
+        )
 
     async def get_meta(self, rid: int) -> MetaRecord:
         raw = await hgetall_slots(self.r, avail_meta_key(rid))
@@ -138,12 +140,11 @@ class RedisStateStore:
         )
 
     async def put_meta(self, rid: int, meta: MetaRecord) -> None:
-        meta_key = avail_meta_key(rid)
         # Both fields are always written, with "" standing in for None, so one HSET fully
         # replaces the record and a cleared UNKNOWN mark cannot linger.
-        await hset_meta(
+        await hset_meta_with_ttl(
             self.r,
-            meta_key,
+            avail_meta_key(rid),
             {
                 META_UNKNOWN_SINCE: (
                     "" if meta.unknown_since_ms is None else str(meta.unknown_since_ms)
@@ -152,8 +153,8 @@ class RedisStateStore:
                     "" if meta.last_success_ms is None else str(meta.last_success_ms)
                 ),
             },
+            AVAIL_STATE_TTL_SECONDS,
         )
-        await expire_key(self.r, meta_key, AVAIL_STATE_TTL_SECONDS)
 
 
 class BufferedStateStore:

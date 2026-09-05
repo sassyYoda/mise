@@ -5,7 +5,8 @@ Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT, sched_expedite_key,
                CONFIRM_DELAY_MS, EXPEDITE_FLAG_TTL_SECONDS, EXPEDITE_POLL_LUA,
                avail_state_key, avail_meta_key, event_idempotency_key,
                AVAIL_STATE_TTL_SECONDS, EVENT_IDEMPOTENCY_TTL_SECONDS,
-               hset_slot, hgetall_slots, hdel_slot, hset_meta, expire_key
+               hset_slot, hgetall_slots, hdel_slot, hset_meta, expire_key,
+               hset_slot_with_ttl, hdel_slot_with_ttl, hset_meta_with_ttl
 """
 from __future__ import annotations
 
@@ -107,6 +108,48 @@ async def hset_meta(r: Redis, key: str, mapping: Mapping[str, str]) -> int:
 async def expire_key(r: Redis, key: str, ttl_seconds: int) -> bool:
     """EXPIRE the whole key — the only TTL mechanism available on Redis 7.2."""
     return bool(await r.expire(key, ttl_seconds))
+
+
+# -- Atomic mutate-and-refresh helpers (Pitfall 7) --
+# A mutation followed by a SEPARATE EXPIRE is the same non-atomic shape this repo bans for
+# SETNX+EXPIRE, just spelled differently: if the process dies (or the connection drops) between
+# the two commands while the key is being CREATED, the hash is left with no TTL and never
+# expires — a permanently stale slot record that suppresses real events. Every mutating call in
+# services/state_machine/store.py goes through one of these, which issue both commands in a
+# single MULTI/EXEC round trip. That also halves the round trips on the hot path.
+
+
+async def hset_slot_with_ttl(
+    r: Redis, key: str, field: str, value: str, ttl_seconds: int
+) -> None:
+    """HSET one slot record and refresh the key TTL in a single transaction."""
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.hset(key, field, value)
+        pipe.expire(key, ttl_seconds)
+        await pipe.execute()
+
+
+async def hdel_slot_with_ttl(r: Redis, key: str, field: str, ttl_seconds: int) -> None:
+    """
+    HDEL one slot record and refresh the key TTL in a single transaction.
+
+    Removing the last field deletes the key naturally; an EXPIRE against an absent key is a
+    no-op returning 0, so that case needs no special handling.
+    """
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.hdel(key, field)
+        pipe.expire(key, ttl_seconds)
+        await pipe.execute()
+
+
+async def hset_meta_with_ttl(
+    r: Redis, key: str, mapping: Mapping[str, str], ttl_seconds: int
+) -> None:
+    """HSET a whole metadata mapping and refresh the key TTL in a single transaction."""
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.hset(key, mapping=dict(mapping))
+        pipe.expire(key, ttl_seconds)
+        await pipe.execute()
 
 
 # -- Confirmation expedite (D-43, STATE-03) --
