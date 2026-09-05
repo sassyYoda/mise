@@ -161,7 +161,14 @@ async def test_reapplying_head_is_a_no_op(db_urls):
 
 @pytest.mark.asyncio
 async def test_downgrade_then_upgrade_restores_the_same_schema(db_urls):
-    """A real downgrade() exists and the round trip is lossless."""
+    """A real downgrade() exists and the round trip is lossless.
+
+    The restore is in a `finally` (WR-07). The container is MODULE-scoped, so a failure
+    between the downgrade and `apply_migrations` used to leave the shared database at
+    revision 0007 with no `event_id` column, and every later test in this module then failed
+    for an unrelated reason — burying the real failure behind collateral damage whose
+    membership varies with collection order.
+    """
     env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
     result = subprocess.run(
         ["uv", "run", "alembic", "downgrade", "-1"],
@@ -169,19 +176,20 @@ async def test_downgrade_then_upgrade_restores_the_same_schema(db_urls):
     )
     assert result.returncode == 0, f"downgrade failed: {result.stderr}"
 
-    conn = await asyncpg.connect(db_urls["dsn"])
     try:
-        assert await conn.fetchval(
-            "SELECT count(*) FROM pg_indexes WHERE indexname = $1", INDEX_NAME
-        ) == 0
-        assert await conn.fetchval(
-            "SELECT count(*) FROM information_schema.columns "
-            "WHERE table_name = 'availability_events' AND column_name = 'event_id'"
-        ) == 0
+        conn = await asyncpg.connect(db_urls["dsn"])
+        try:
+            assert await conn.fetchval(
+                "SELECT count(*) FROM pg_indexes WHERE indexname = $1", INDEX_NAME
+            ) == 0
+            assert await conn.fetchval(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'availability_events' AND column_name = 'event_id'"
+            ) == 0
+        finally:
+            await conn.close()
     finally:
-        await conn.close()
-
-    apply_migrations(env)
+        apply_migrations(env)
 
     conn = await asyncpg.connect(db_urls["dsn"])
     try:
@@ -215,32 +223,38 @@ async def test_a_non_empty_table_is_refused_not_deleted(db_urls):
     )
     assert downgraded.returncode == 0, f"downgrade failed: {downgraded.stderr}"
 
-    conn = await asyncpg.connect(db_urls["dsn"])
+    # The restore is in a `finally` (WR-07), and this test is the reason it matters most:
+    # `assert failed.returncode != 0` is exactly what fails if someone reintroduces the
+    # DELETE, and that failure used to leave the module's shared database at revision 0007.
     try:
-        # A pre-0008 row: no event_id column exists at this revision.
-        await conn.execute(
-            'INSERT INTO availability_events '
-            '("time", restaurant_id, source, date, party_size) '
-            "VALUES ($1, 4242, 'opentable', $2, 2)",
-            legacy_time, date_cls(2026, 5, 3),
-        )
+        conn = await asyncpg.connect(db_urls["dsn"])
+        try:
+            # A pre-0008 row: no event_id column exists at this revision.
+            await conn.execute(
+                'INSERT INTO availability_events '
+                '("time", restaurant_id, source, date, party_size) '
+                "VALUES ($1, 4242, 'opentable', $2, 2)",
+                legacy_time, date_cls(2026, 5, 3),
+            )
 
-        failed = subprocess.run(
-            ["uv", "run", "alembic", "upgrade", "head"],
-            env=env, capture_output=True, text=True,
-        )
-        assert failed.returncode != 0, "0008 must refuse to run against a non-empty table"
-        assert "pre-0008 row" in failed.stderr + failed.stdout, (
-            f"expected the explicit refusal; got {failed.stderr[-2000:]!r}"
-        )
+            failed = subprocess.run(
+                ["uv", "run", "alembic", "upgrade", "head"],
+                env=env, capture_output=True, text=True,
+            )
+            assert failed.returncode != 0, "0008 must refuse to run against a non-empty table"
+            assert "pre-0008 row" in failed.stderr + failed.stdout, (
+                f"expected the explicit refusal; got {failed.stderr[-2000:]!r}"
+            )
 
-        survivors = await conn.fetchval(
-            'SELECT count(*) FROM availability_events WHERE "time" = $1', legacy_time
-        )
-        assert survivors == 1, "the migration deleted a row it was refusing to migrate"
+            survivors = await conn.fetchval(
+                'SELECT count(*) FROM availability_events WHERE "time" = $1', legacy_time
+            )
+            assert survivors == 1, "the migration deleted a row it was refusing to migrate"
+        finally:
+            await conn.execute(
+                'DELETE FROM availability_events WHERE "time" = $1', legacy_time
+            )
+            await conn.close()
     finally:
-        await conn.execute('DELETE FROM availability_events WHERE "time" = $1', legacy_time)
-        await conn.close()
-
-    # Restore the module's schema for anything that runs after this test.
-    apply_migrations(env)
+        # Restore the module's schema for anything that runs after this test.
+        apply_migrations(env)
