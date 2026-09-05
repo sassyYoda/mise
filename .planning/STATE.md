@@ -5,14 +5,14 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Resy & Playwright Fleet
 status: executing
-stopped_at: Completed 03-02-scheduling-kernel-metrics-redaction-PLAN.md
-last_updated: "2026-09-05T09:04:57.292Z"
+stopped_at: Completed 03-03-resy-config-schema-seed-PLAN.md
+last_updated: "2026-09-05T09:32:34.028Z"
 last_activity: 2026-09-05
-last_activity_desc: 03-02 complete — 80 rpm budget Lua, tier/backoff math, redaction, metrics
+last_activity_desc: 03-03 complete — UNIQUE(slug, source), the seed field split, and lazily-read Resy config
 progress:
   total_phases: 7
   completed_phases: 0
-  total_plans: 24
+  total_plans: 43
   completed_plans: 0
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 3 (Resy & Playwright Fleet) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
-Last activity: 2026-09-05 — 03-02 complete (80 rpm cap + 45 s floor enforceable atomically in Redis)
+Last activity: 2026-09-05 — 03-03 complete (a Resy job is representable; every venue id still null and human-gated)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -68,6 +68,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 2 P04 | 11 | 3 tasks | 13 files |
 | Phase 3 P01 | 18 | 3 tasks | 14 (7 created, 8 modified) files |
 | Phase 3 P02 | 34 | 3 tasks | 11 files (8 created, 3 modified) |
+| Phase 3 P3 | 24 | 3 tasks | 13 files (6 created, 7 modified) files |
 
 ## Accumulated Context
 
@@ -110,6 +111,11 @@ Recent decisions affecting current work:
 - [Phase ?]: 03-02: effective_interval_seconds is max(min(tier, baseline), floor): watches may only speed a source UP, and the per-source floor is applied last because the floor is the promise (D-57)
 - [Phase ?]: 03-02: The telemetry redactor splits by origin — env-var names case-sensitive, HTTP header names case-insensitive; RESY_PROXY_URL is masked not blanked, failing closed on anything unparseable (D-61a)
 - [Phase ?]: 03-02: shared/metrics.py is the single definition site for every Prometheus metric in the repo; Phases 4-7 append there and never define at first use (D-69)
+- [Phase ?]: 03-03: migration 0009 replaces UNIQUE(slug) with UNIQUE(slug, source) — a slug identifies a RESTAURANT, not a row; 0003 declared it twice (column constraint + index) so both are dropped, by their correct object kinds (D-63b)
+- [Phase ?]: 03-03: no placeholder Resy venue id was minted, breaking with Phase 1's opentable_rid precedent — an OpenTable placeholder 404s, a Resy placeholder is a WORKING poll against a stranger's venue (D-63a, T-03-10)
+- [Phase ?]: 03-03: RESY_ENABLED gates the Resy restaurants ROW as well as the job — a row nothing polls reads to every Phase 5/6 query as 'never available', which is a false statement about the world
+- [Phase ?]: 03-03: migration tests must name ABSOLUTE alembic revisions; 'downgrade -1' means one step from HEAD and silently retargeted the moment 0009 landed, failing two 0008 tests on a column they never mention
+- [Phase ?]: 03-03: the human-gated step ships as a dry-run-capable script (scripts/resolve_resy_venue_ids.py, exit 0/1/2) plus a STATUS: pending-human runbook, never as a blocking checkpoint
 
 ### Pending Todos
 
@@ -139,8 +145,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T09:04:57.285Z
-Stopped at: Completed 03-02-scheduling-kernel-metrics-redaction-PLAN.md
+Last session: 2026-09-05T09:32:24.892Z
+Stopped at: Completed 03-03-resy-config-schema-seed-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
