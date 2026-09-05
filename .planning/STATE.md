@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: State Machine & Event Pipeline
-status: executing
+current_phase: 03
+current_phase_name: Resy & Playwright Fleet
+status: planning
 stopped_at: Completed 02-04-replay-determinism-PLAN.md
-last_updated: "2026-09-05T07:38:12.631Z"
+last_updated: "2026-09-05T07:51:06.616Z"
 last_activity: 2026-09-05
-last_activity_desc: Phase 2 execution started
+last_activity_desc: Phase 2 complete, transitioned to Phase 03
 progress:
   total_phases: 4
   completed_phases: 0
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 
 ## Current Position
 
-Phase: 2 (State Machine & Event Pipeline) — EXECUTING
-Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-09-05 — Phase 2 execution started
+Phase: 03 — Resy & Playwright Fleet
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-05 — Phase 2 complete, transitioned to Phase 03
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -38,7 +38,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 4
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -47,6 +47,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | — | — | — | — |
+| 2 | 4 | - | - |
 
 **Recent Trend:**
 
@@ -114,6 +115,8 @@ None yet.
 - [Phase 4] iOS PWA Web Push requires real-device test (not simulator) — subscription silently revokes after ~3 pushes if service worker `push` handler does not wrap entire async chain in `event.waitUntil(...)`.
 - [Phase 4] Every idempotency key must use atomic `SET key value NX EX ttl` — zero occurrences of two-command `SETNX` + `EXPIRE` in source tree.
 - [Phase 7] Public read-only Grafana dashboard link is launch-blocking for portfolio credibility, not optional polish.
+- [Phase 2] Code review ran 3 iterations (25 + 17 findings fixed); the consumer rewinds on transient failure — any exception escaping `process()` that is not in the poison tuple loops forever by design; keep the poison tuple complete when adding parsers (Phase 3 Resy parser).
+- [Phase 3] `resy_venue_id` values in the seed are slugs; numeric ids are human-gated (resolver script). Resy fleet runs in anonymous/stub mode until cookies exist.
 - [Phase 1 CLOSE] PERF-02 24h observation run (01-06 T3/T4) requires OpenTable DevTools spike (01-05 T1) + infra up + 24h wall-clock wait. Full runbook at docs/runbooks/perf02-24h-log.md. Phase 01 cannot close until this run passes + admin gates from 01-03 complete.
 
 ## Deferred Items

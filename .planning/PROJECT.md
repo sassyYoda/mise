@@ -14,19 +14,18 @@ When a coveted table opens, the watching user is notified fast enough to actuall
 
 <!-- Shipped and confirmed valuable. -->
 
-(None yet — ship to validate)
+- ✓ Stateful availability diff engine with confirmation polls and idempotency guards — Phase 2 (tri-state diff, t+8s ZSET-expedited confirmation, `SET NX EX` Layer-1 claims, byte-identical `scripts/replay_raw.py`; 254 unit / 62 integration tests)
 
 ### Active
 
 <!-- Current scope. Building toward these. See REQUIREMENTS.md for detail. -->
 
 - [ ] Continuous polling of Resy (Playwright) and OpenTable (HTTP) across ≥ 50 NYC restaurants
-- [ ] Stateful availability diff engine with confirmation polls and idempotency guards
 - [ ] Kafka-based event pipeline (availability.raw → availability.events → notifications.queued → notifications.sent)
 - [ ] Multi-channel notification delivery: email (Resend), SMS (Twilio), Web Push (VAPID)
 - [ ] Watchlist CRUD with token-based, auth-free management links
 - [ ] Statistical pattern detection model (48h rule, inventory-load day, cancellation-peak, duration)
-- [ ] Next.js 14 PWA: home + live SSE activity feed, watch setup, restaurant detail with heatmap, manage, alert landing
+- [ ] Next.js 15 PWA: home + live SSE activity feed, watch setup, restaurant detail with heatmap, manage, alert landing
 - [ ] Admin page + Prometheus/Grafana dashboard + public read-only metrics link
 - [ ] Deployed to mise.place on GCP (Cloud Run + Cloud SQL/TimescaleDB + Memorystore Redis + self-hosted Kafka on GCE)
 
@@ -76,6 +75,11 @@ When a coveted table opens, the watching user is notified fast enough to actuall
 | TimescaleDB for availability_events + poll_log | Hypertables optimize time-series queries for heatmap and pattern model | — Pending |
 | GCP Cloud Run + Cloud SQL + Memorystore | Managed services minimize ops load; free/low tiers at MVP scale | — Pending |
 | PWA at MVP, not native apps | Covers iOS/Android mobile with Web Push; ships faster | — Pending |
+| Stream-based confirmation: the state machine never calls a source; it expedites the restaurant's next poll to t+8s via `ZADD LT` and confirms on the next `availability.raw` | Keeps the diff engine pure so replay of the raw log is byte-identical (STATE-06) | ✓ Phase 2 |
+| Deterministic `event_id` (uuid5) and `produced_at` = confirming poll timestamp | Replay determinism; downstream Layer-2 dedupe by event_id absorbs at-least-once redelivery | ✓ Phase 2 |
+| `restaurant_id` on the wire is the platform id; `(source, platform_id)` is the join key to `restaurants` | Matches `poll_log`; no DB lookups in the engine | ✓ Phase 2 |
+| Layer-1 claim key `event:{rid}:{date}:{party}:{slot_key}:{token}` (percent-escaped) | Two seat types can share one booking token (found by code review) | ✓ Phase 2 |
+| Autonomous run executes plans sequentially on the main tree (`use_worktrees=false`) | Docker-backed tests contend under parallel worktrees; no human to resolve merges | ✓ Phase 2 |
 
 ## Evolution
 
@@ -95,4 +99,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-20 after initialization*
+*Last updated: 2026-09-05 after Phase 2*

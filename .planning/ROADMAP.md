@@ -16,7 +16,7 @@ Mise en Place is an 8-week portfolio MVP for a distributed restaurant-reservatio
 - Decimal phases (e.g., 3.1): Urgent insertions (marked with INSERTED)
 
 - [ ] **Phase 1: Foundation, Admin Pre-conditions & OpenTable Polling** - Monorepo, Docker Compose stack, Kafka spine, Redis ZSET scheduler, OpenTable httpx polling for 50 seeded restaurants; Twilio 10DLC submitted Day 1
-- [ ] **Phase 2: State Machine & Event Pipeline** - Tri-state diff engine with t+8s confirmation poll, two-layer idempotency, replay script; emits confirmed `availability.events`
+- [x] **Phase 2: State Machine & Event Pipeline** - Tri-state diff engine with t+8s confirmation poll, two-layer idempotency, replay script; emits confirmed `availability.events` (completed 2026-09-05)
 - [ ] **Phase 3: Resy & Playwright Fleet** - Playwright context pool, tf-playwright-stealth, soft-ban canary, 12-hour soak test before Resy goes live
 - [ ] **Phase 4: Notification Pipeline** - Email (Resend), SMS (Twilio), Web Push (VAPID) with Layer-2 idempotency, iOS PWA push validated on real device
 - [ ] **Phase 5: API, Watchlist CRUD & SSE** - FastAPI with HMAC management tokens, watchlist CRUD, SSE live feed, admin routes, public metrics endpoint
@@ -189,7 +189,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
-| 2. State Machine & Event Pipeline | 4/4 | In progress | - |
+| 2. State Machine & Event Pipeline | 4/4 | Complete    | 2026-09-05 |
 | 3. Resy & Playwright Fleet | 0/7 | Planned | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |
