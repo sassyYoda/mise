@@ -73,3 +73,55 @@ async def test_claim_returns_none_when_empty(redis_url):
     job = await sched.claim(now_ms)
     assert job is None
     await r.aclose()
+
+
+@pytest.mark.asyncio
+async def test_drop_removes_a_malformed_job_without_re_enqueuing_it(redis_url):
+    """WR-14: a job the poller cannot parse must leave the system, not loop forever.
+
+    `continue`-ing past a malformed descriptor left it in `sched:polls:inflight` with a 60 s
+    visibility score, so the reaper re-enqueued it into `sched:polls` at `now_ms`, it was
+    claimed again immediately, warned about, and abandoned again — on every reaper cycle,
+    with each pass also starving the queue of one claim slot.
+    """
+    r = redis.from_url(redis_url, decode_responses=False)
+    sched = LuaScheduler(r)
+    await sched.start()
+    now_ms = int(time.time() * 1000)
+
+    await r.delete(SCHED_POLLS, SCHED_POLLS_INFLIGHT)
+    await r.zadd(SCHED_POLLS, {"garbage-no-colon": now_ms - 1000})
+
+    assert await sched.claim(now_ms) == "garbage-no-colon"
+    assert b"garbage-no-colon" in await r.zrange(SCHED_POLLS_INFLIGHT, 0, -1)
+
+    assert await sched.drop("garbage-no-colon") is True
+
+    assert await r.zrange(SCHED_POLLS_INFLIGHT, 0, -1) == []
+    assert await r.zrange(SCHED_POLLS, 0, -1) == [], "drop must NOT re-enqueue"
+
+    # The reaper has nothing left to resurrect, so the loop is genuinely broken.
+    assert await sched.reap(now_ms + 120_000) == []
+    assert await r.zrange(SCHED_POLLS, 0, -1) == []
+
+    # Dropping something that is not there is a no-op, not an error.
+    assert await sched.drop("garbage-no-colon") is False
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_job_left_in_flight_is_resurrected_by_the_reaper(redis_url):
+    """Pins the behaviour that made the leak permanent, so the fix cannot be reverted quietly."""
+    r = redis.from_url(redis_url, decode_responses=False)
+    sched = LuaScheduler(r)
+    await sched.start()
+    now_ms = int(time.time() * 1000)
+
+    await r.delete(SCHED_POLLS, SCHED_POLLS_INFLIGHT)
+    await r.zadd(SCHED_POLLS, {"garbage-no-colon": now_ms - 1000})
+    await sched.claim(now_ms)
+
+    # No drop: the reaper puts it straight back on the ready queue, forever.
+    assert await sched.reap(now_ms + 120_000) == ["garbage-no-colon"]
+    assert b"garbage-no-colon" in await r.zrange(SCHED_POLLS, 0, -1)
+
+    await r.delete(SCHED_POLLS, SCHED_POLLS_INFLIGHT)

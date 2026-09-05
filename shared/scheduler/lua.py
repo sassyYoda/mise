@@ -80,6 +80,22 @@ class LuaScheduler:
             job, str(next_poll_ms),
         )
 
+    async def drop(self, job: str) -> bool:
+        """
+        Remove a job from `sched:polls:inflight` WITHOUT re-enqueuing it (D-18).
+
+        The one legitimate use is a job descriptor the poller cannot parse. Merely `continue`-ing
+        past such a job left it in the inflight ZSET with a 60 s visibility score, so
+        REAP_INFLIGHT_LUA re-enqueued it into `sched:polls` at `now_ms`, it was claimed again
+        immediately, warned about, and abandoned again — forever, on every reaper cycle, with
+        each pass also starving the queue of one claim slot.
+
+        A single ZREM is already atomic, so this needs no Lua. Returns True if the job was
+        present.
+        """
+        removed = await cast(Awaitable[int], self.r.zrem(SCHED_POLLS_INFLIGHT, job))
+        return bool(removed)
+
     async def reap(self, now_ms: int) -> list[str]:
         """Re-enqueue expired inflight jobs (worker crash recovery). Returns re-enqueued job IDs."""
         assert self._reap_sha is not None, "Call start() first"

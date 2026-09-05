@@ -61,15 +61,20 @@ async def poll_loop(
 
         parts = job.split(":", 1)
         if len(parts) != 2:
-            log.warning("invalid_job_descriptor", job=job)
-            # Don't re-enqueue malformed jobs — drop them from inflight.
+            # A `continue` alone did NOT drop it: the job stayed in sched:polls:inflight with a
+            # 60 s visibility score, so the reaper re-enqueued it into sched:polls, it was
+            # claimed again immediately, warned about, and abandoned again — forever, with each
+            # pass also starving the queue of one claim slot. Remove it explicitly.
+            await scheduler.drop(job)
+            log.error("invalid_job_descriptor", job=job)
             continue
 
         source, rid_str = parts
         try:
             restaurant_id = int(rid_str)
         except ValueError:
-            log.warning("invalid_restaurant_id", job=job)
+            await scheduler.drop(job)
+            log.error("invalid_restaurant_id", job=job)
             continue
 
         poll_id = uuid.uuid4()
