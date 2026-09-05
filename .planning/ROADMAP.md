@@ -62,12 +62,12 @@ Plans:
   3. A chaos test that kills the State Machine with `kill -9` between diff and emit produces zero duplicate events on restart — the Layer-1 `SET event:{r}:{d}:{p}:{token} 1 NX EX 1200` idempotency key blocks re-emission, and the source tree contains zero occurrences of two-command `SETNX` + `EXPIRE`.
   4. Confirmed `availability.events` persist to the TimescaleDB `availability_events` hypertable with populated `first_seen_at`, `last_seen_at`, `duration_seconds`, `hours_before_service`, and `day_of_week` columns.
 
-**Plans**: 1/4 plans executed
+**Plans**: 0/4 plans executed
 Plans:
 **Wave 1**
 
 - [x] 02-01-core-diff-engine-PLAN.md — Wave 1 — AvailabilityEvent contract, OpenTable parser, pure tri-state DiffEngine over MemoryStateStore
-- [ ] 02-02-shared-kernel-expedite-schema-PLAN.md — Wave 1 — expedite Lua + poller release hook, Redis key registry, make_consumer, migration 0008, Kafka image fix
+- [x] 02-02-shared-kernel-expedite-schema-PLAN.md — Wave 1 — expedite Lua + poller release hook, Redis key registry, make_consumer, migration 0008, Kafka image fix
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -165,7 +165,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
-| 2. State Machine & Event Pipeline | 0/4 | Planned    |  |
+| 2. State Machine & Event Pipeline | 2/4 | In progress | - |
 | 3. Resy & Playwright Fleet | 0/TBD | Not started | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |

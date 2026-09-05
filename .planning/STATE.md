@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: State Machine & Event Pipeline
 status: executing
-stopped_at: Completed 02-01-core-diff-engine-PLAN.md
-last_updated: "2026-09-05T05:22:39.603Z"
+stopped_at: Completed 02-02-shared-kernel-expedite-schema-PLAN.md
+last_updated: "2026-09-05T05:38:35.925Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 2 execution started
 progress:
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 2 (State Machine & Event Pipeline) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 2 execution started
 
@@ -62,6 +62,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 2 P01 | 13 | 3 tasks | 17 files |
+| Phase 2 P2 | 14 | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,12 @@ Recent decisions affecting current work:
 - [Phase ?]: 02-01: SlotState uses enum.StrEnum rather than (str, Enum) — ruff UP042 rejects the mixin form on py312; semantics are identical.
 - [Phase ?]: 02-01: OPENTABLE_SUCCESS_RESPONSE carries seatingTypes [bar, standard], so one timeslot yields TWO slots and the confirming poll emits TWO events; Expedite is de-duplicated to one per restaurant per poll (ZSET score is per job, not per slot).
 - [Phase ?]: 02-01: Requirements STATE-02/04/06 left Pending — this plan ships only the pure core; the SET NX EX claim, consumer shell and replay script land in 02-02/02-03/02-04.
+- [Phase ?]: 02-02: The expedite handshake is server-side atomic — EXPEDITE_POLL_LUA does ZSCORE + conditional ZADD XX LT in one round trip; XX prevents resurrecting an in-flight job into a duplicate concurrent poll, LT prevents pushing an already-sooner poll later.
+- [Phase ?]: 02-02: Every cast(Awaitable[T], ...) for redis-py HASH commands lives in shared/redis_keys.py helpers, so services/state_machine/store.py needs none and no type-suppression comment is used anywhere (research Pitfall 3).
+- [Phase ?]: 02-02: availability_events PK is (time, event_id); restaurant_id left the PK because every slot confirmed by one poll shares that poll's time and collided on the second slot (research B-3).
+- [Phase ?]: 02-02: availability_events.restaurant_id is the SOURCE PLATFORM id, recorded via COMMENT ON COLUMN and an ORM docstring; join key against restaurants is (source, platform_id) (D-52).
+- [Phase ?]: 02-02: services/poller/config.py freezes env vars at import time — integration modules that import poller code must evict services.poller.* from sys.modules on teardown or they silently pin later tests to localhost defaults.
+- [Phase ?]: 02-02: Requirements STATE-01/03/05 left Pending — this plan ships the primitives and schema; the state store, consumer shell and persistence land in 02-03.
 
 ### Pending Todos
 
@@ -109,8 +116,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T05:22:32.123Z
-Stopped at: Completed 02-01-core-diff-engine-PLAN.md
+Last session: 2026-09-05T05:38:35.919Z
+Stopped at: Completed 02-02-shared-kernel-expedite-schema-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
