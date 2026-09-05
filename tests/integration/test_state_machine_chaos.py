@@ -124,7 +124,9 @@ async def test_sigkill_before_commit_produces_no_duplicate_events(
         await producer.stop()
 
     # 1. Run with the crash hook armed. The confirming poll emits, writes state, then dies.
-    crashing = _launch({**base_env, "MISE_CRASH_AFTER": "state_write"})
+    # ENV must be named explicitly: the crash-hook interlock fails closed, so an unset ENV
+    # refuses to arm the hook rather than defaulting to "dev" (WR-13, T-02-04).
+    crashing = _launch({**base_env, "MISE_CRASH_AFTER": "state_write", "ENV": "test"})
     try:
         crashing.wait(timeout=120)
     except subprocess.TimeoutExpired:  # pragma: no cover - diagnostic path

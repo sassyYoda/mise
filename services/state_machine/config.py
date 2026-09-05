@@ -10,7 +10,7 @@ at IMPORT time, so any integration test that imports the service during collecti
 whole run to the localhost defaults instead of its testcontainers (02-02 deviation 1). Reading
 lazily inside `run()` removes that footgun for this service permanently.
 Named symbols: CONSUMER_GROUP_ID, kafka_bootstrap_servers, redis_url, database_url_async,
-               env_name, crash_after, CONFIRM_DELAY_MS
+               env_name, crash_after, crash_hook_allowed, CRASH_HOOK_ENVS, CONFIRM_DELAY_MS
 """
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ from shared.redis_keys import CONFIRM_DELAY_MS  # noqa: F401 (re-exported for co
 __all__ = [
     "CONFIRM_DELAY_MS",
     "CONSUMER_GROUP_ID",
+    "CRASH_HOOK_ENVS",
     "crash_after",
+    "crash_hook_allowed",
     "database_url_async",
     "env_name",
     "kafka_bootstrap_servers",
@@ -55,8 +57,27 @@ def database_url_async() -> str:
 
 
 def env_name() -> str:
-    """Deployment environment. `prod` refuses the test-only crash hook (T-02-04)."""
+    """Deployment environment, defaulting to `dev` for logging and diagnostics."""
     return os.getenv("ENV", "dev")
+
+
+# The ONLY environments in which the SIGKILL hook may be armed (T-02-04). An allowlist, not a
+# denylist: `ENV == "prod"` let `ENV=production`, `ENV=PROD` and a container that forgot to set
+# ENV at all start happily with a hook whose entire job is to kill the process mid-pipeline.
+# A safety interlock must fail CLOSED.
+CRASH_HOOK_ENVS: frozenset[str] = frozenset({"dev", "test", "ci", "local"})
+
+
+def crash_hook_allowed() -> bool:
+    """
+    True only when ENV is EXPLICITLY set to a known non-production environment.
+
+    Deliberately reads the raw variable rather than `env_name()`: the "dev" default exists so
+    logging has something to say, and letting it also unlock a SIGKILL hook would mean an
+    unconfigured production container is the most permissive configuration there is.
+    """
+    raw = os.getenv("ENV")
+    return raw is not None and raw.strip().lower() in CRASH_HOOK_ENVS
 
 
 def crash_after() -> str | None:

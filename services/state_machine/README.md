@@ -218,8 +218,8 @@ would stop being a golden.
 | `REDIS_URL` | `redis://localhost:6379/0` | Slot state, the emission claim and the scheduler ZSET. |
 | `DATABASE_URL_ASYNC` | `postgresql+asyncpg://mise:mise@localhost:5432/mise` | Analytics writes only; a failure is logged, never fatal. |
 | `CONFIRM_DELAY_MS` | — | **Not an environment variable.** The confirmation window is the compile-time constant `shared.redis_keys.CONFIRM_DELAY_MS` (8000 ms); setting it in a shell or a deployment does nothing. Listed here because it used to be documented as tunable. |
-| `ENV` | `dev` | `prod` refuses to start with the crash hook set. |
-| `MISE_CRASH_AFTER` | unset | **TEST ONLY.** SIGKILLs the process after the named stage (`nx_claim`, `kafka_send`, `state_write`, `commit`) so the chaos test can prove crash safety. `main.run()` raises if it is set while `ENV=prod`. |
+| `ENV` | `dev` | Must be **explicitly** one of `dev`, `test`, `ci`, `local` for `MISE_CRASH_AFTER` to be accepted. Anything else — including unset — refuses to start with the hook armed. |
+| `MISE_CRASH_AFTER` | unset | **TEST ONLY.** SIGKILLs the process after the named stage (`nx_claim`, `kafka_send`, `state_write`, `commit`) so the chaos test can prove crash safety. `main.run()` raises unless `ENV` is explicitly one of `dev`/`test`/`ci`/`local`; the interlock fails closed, so an unconfigured container is not the most permissive configuration. |
 
 Every variable in the table above (bar the last-but-one row, which is not one) is read lazily,
 inside `run()`, never frozen into a module constant at import time — that is what lets an

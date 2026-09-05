@@ -102,3 +102,54 @@ async def test_dispose_engine_is_a_no_op_without_an_engine() -> None:
     finally:
         shared_db._engine = original_engine
         shared_db._session_factory = original_factory
+
+
+# -- WR-13: the crash-hook interlock must fail CLOSED --
+
+
+@pytest.mark.parametrize(
+    "env_value",
+    [None, "prod", "production", "PROD", "Production", "staging", "", "  "],
+    ids=["unset", "prod", "production", "upper", "mixed", "staging", "empty", "blank"],
+)
+@pytest.mark.asyncio
+async def test_the_crash_hook_is_refused_outside_the_allowlist(
+    monkeypatch, fake_redis, env_value
+) -> None:
+    """`env_name() == 'prod'` armed a SIGKILL hook for every one of these."""
+    monkeypatch.setenv("MISE_CRASH_AFTER", "state_write")
+    if env_value is None:
+        monkeypatch.delenv("ENV", raising=False)
+    else:
+        monkeypatch.setenv("ENV", env_value)
+
+    with pytest.raises(RuntimeError, match="MISE_CRASH_AFTER"):
+        await main.run()
+
+    assert fake_redis.aclose.await_count == 0, "the guard must run before anything is acquired"
+
+
+@pytest.mark.parametrize("env_value", ["dev", "test", "ci", "local", "TEST", " dev "])
+@pytest.mark.asyncio
+async def test_the_crash_hook_is_allowed_in_named_non_production_environments(
+    monkeypatch, env_value
+) -> None:
+    """The chaos test has to be able to arm it; only the interlock changed, not the feature."""
+    from services.state_machine.config import crash_hook_allowed
+
+    monkeypatch.setenv("ENV", env_value)
+    assert crash_hook_allowed() is True
+
+
+@pytest.mark.asyncio
+async def test_no_hook_means_no_guard(monkeypatch, fake_redis) -> None:
+    """A production service without the variable set is unaffected by the interlock."""
+    async def _boom(bootstrap_servers: str) -> None:
+        raise RuntimeError("Kafka topics missing: ['availability.events']")
+
+    monkeypatch.delenv("MISE_CRASH_AFTER", raising=False)
+    monkeypatch.setenv("ENV", "prod")
+    monkeypatch.setattr(main, "_assert_topics_exist", _boom)
+
+    with pytest.raises(RuntimeError, match="topics missing"):
+        await main.run()

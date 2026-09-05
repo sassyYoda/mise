@@ -8,11 +8,13 @@ time (research B-1).
 
 Startup guard 1: all 5 Named-Symbol Kafka topics must exist, because auto-creation is disabled
 and a missing topic would otherwise fail silently per-publish (D-27).
-Startup guard 2: the test-only crash hook is refused outright in prod (T-02-04).
+Startup guard 2: the test-only crash hook is refused unless ENV is EXPLICITLY one of the
+dev/test/ci/local allowlist — a safety interlock has to fail closed (T-02-04).
 """
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import AsyncExitStack
 
 import redis.asyncio as redis
@@ -21,8 +23,9 @@ from aiokafka.admin import AIOKafkaAdminClient
 from services.state_machine.config import (
     CONFIRM_DELAY_MS,
     CONSUMER_GROUP_ID,
+    CRASH_HOOK_ENVS,
     crash_after,
-    env_name,
+    crash_hook_allowed,
     kafka_bootstrap_servers,
     redis_url,
 )
@@ -66,10 +69,15 @@ async def _assert_topics_exist(bootstrap_servers: str) -> None:
 async def run() -> None:
     configure_logging()
 
-    if crash_after() is not None and env_name() == "prod":
+    # Fail CLOSED (T-02-04). The old guard was `env_name() == "prod"`, which armed a SIGKILL
+    # hook on a live event pipeline for ENV=production, ENV=PROD, and any container that
+    # forgot to set ENV at all — the unconfigured case being the most permissive one.
+    if crash_after() is not None and not crash_hook_allowed():
         raise RuntimeError(
-            "MISE_CRASH_AFTER is set and ENV=prod. That variable is a TEST-ONLY hook that "
-            "SIGKILLs this process at the named stage (T-02-04); unset it to start."
+            f"MISE_CRASH_AFTER is set but ENV={os.getenv('ENV')!r} is not one of "
+            f"{sorted(CRASH_HOOK_ENVS)}. That variable is a TEST-ONLY hook that SIGKILLs this "
+            "process at the named stage (T-02-04); unset it, or set ENV explicitly to a "
+            "non-production environment."
         )
 
     bootstrap_servers = kafka_bootstrap_servers()
