@@ -156,3 +156,50 @@ async def test_an_unusable_party_size_surfaces_through_parse_raw() -> None:
     )
     with pytest.raises(ParseError):
         parse_raw(broken)
+
+
+# -- WR-09: a poll that observed nothing must never report success --
+
+
+@pytest.mark.parametrize(
+    "request_params",
+    [
+        {},
+        {"rid": RID},
+        {"rid": RID, "dates": [], "party_sizes": [2]},
+        {"rid": RID, "dates": [DATE], "party_sizes": []},
+        {"rid": RID, "dates": "2026-05-01", "party_sizes": [2]},
+    ],
+    ids=["absent", "rid_only", "no_dates", "no_parties", "dates_not_a_list"],
+)
+def test_a_poll_without_coverage_is_a_parse_error(request_params) -> None:
+    """Unbounded coverage means UNKNOWN, not a successful observation of nothing."""
+    from services.state_machine.parsers import parse_raw
+
+    raw = make_raw(
+        rid=RID, dates=[DATE], parties=[2], response=OPENTABLE_SUCCESS_RESPONSE,
+        polled_at_epoch_ms=T0,
+    )
+    with pytest.raises(ParseError):
+        parse_raw(raw.model_copy(update={"request_params": request_params}))
+
+
+async def test_a_poll_without_coverage_does_not_clear_an_unknown_mark() -> None:
+    """The expensive part of the bug: mark_success ran and the restaurant looked healthy."""
+    store = MemoryStateStore()
+    engine = DiffEngine(store, confirm_delay_ms=CONFIRM_DELAY_MS)
+    await engine.mark_unknown(RID, T0)
+
+    from services.state_machine.parsers import parse_raw
+
+    raw = make_raw(
+        rid=RID, dates=[DATE], parties=[2], response=OPENTABLE_SUCCESS_RESPONSE,
+        polled_at_epoch_ms=T0 + 90_000,
+    )
+    with pytest.raises(ParseError):
+        parsed = parse_raw(raw.model_copy(update={"request_params": {}}))
+        await engine.process(parsed)
+
+    meta = await store.get_meta(RID)
+    assert meta.unknown_since_ms == T0, "an unobservable poll cleared the UNKNOWN mark"
+    assert meta.last_success_ms is None

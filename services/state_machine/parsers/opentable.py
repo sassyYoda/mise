@@ -83,8 +83,15 @@ def parse_opentable(raw: AvailabilityRaw) -> ParsedPoll:
     Normalise one OpenTable `availability.raw` message into a ParsedPoll.
 
     Raises ParseError for a non-mapping payload, an empty payload, a GraphQL `errors` array,
-    a missing `data` key, or a non-mapping `data`. A well-formed payload carrying zero slots
-    is a VALID zero-slot observation, not an error (D-39).
+    a missing `data` key, a non-mapping `data`, or `request_params` that yields no coverage
+    at all. A well-formed payload carrying zero slots is a VALID zero-slot observation, not an
+    error (D-39) — but a poll whose coverage cannot be determined is a different animal. With
+    empty coverage the parser returned a ParsedPoll with zero slots AND zero coverage even when
+    the payload was full of real ones, `process()` still called `mark_success` and cleared any
+    UNKNOWN mark, and nothing was logged: a publisher regression that dropped `request_params`
+    would render the restaurant permanently blind while its meta record reported perfect
+    health. Unbounded coverage is therefore UNKNOWN, which removes nothing and closes nothing
+    (D-39, D-41).
     """
     payload = raw.raw_response
     if not isinstance(payload, Mapping):
@@ -100,43 +107,47 @@ def parse_opentable(raw: AvailabilityRaw) -> ParsedPoll:
         raise ParseError("data not a mapping")
 
     coverage = effective_coverage(raw.request_params)
-    fallback_party = next(iter(sorted(p for _d, p in coverage)), None)
+    if not coverage:
+        raise ParseError(
+            "request_params yields no coverage: a poll that observed nothing cannot be "
+            "reported as a successful observation"
+        )
+    fallback_party = min(p for _d, p in coverage)
 
     slots: list[Slot] = []
-    if fallback_party is not None:
-        restaurants = data.get("availability")
-        for restaurant in restaurants if isinstance(restaurants, list) else []:
-            if not isinstance(restaurant, Mapping):
+    restaurants = data.get("availability")
+    for restaurant in restaurants if isinstance(restaurants, list) else []:
+        if not isinstance(restaurant, Mapping):
+            continue
+        rid = restaurant.get("restaurantId")
+        if isinstance(rid, int) and rid != raw.restaurant_id:
+            continue
+        date_entries = restaurant.get("availability")
+        for date_entry in date_entries if isinstance(date_entries, list) else []:
+            if not isinstance(date_entry, Mapping):
                 continue
-            rid = restaurant.get("restaurantId")
-            if isinstance(rid, int) and rid != raw.restaurant_id:
+            date = date_entry.get("date")
+            if not isinstance(date, str):
                 continue
-            date_entries = restaurant.get("availability")
-            for date_entry in date_entries if isinstance(date_entries, list) else []:
-                if not isinstance(date_entry, Mapping):
+            timeslots = date_entry.get("timeSlots")
+            for timeslot in timeslots if isinstance(timeslots, list) else []:
+                if not isinstance(timeslot, Mapping):
                     continue
-                date = date_entry.get("date")
-                if not isinstance(date, str):
+                time_slot = timeslot.get("time")
+                if not isinstance(time_slot, str):
                     continue
-                timeslots = date_entry.get("timeSlots")
-                for timeslot in timeslots if isinstance(timeslots, list) else []:
-                    if not isinstance(timeslot, Mapping):
-                        continue
-                    time_slot = timeslot.get("time")
-                    if not isinstance(time_slot, str):
-                        continue
-                    token = timeslot.get("token")
-                    party_size = _slot_party_size(timeslot, fallback_party)
-                    for seat_type in _seating_types(timeslot):
-                        slots.append(
-                            Slot(
-                                date=date,
-                                party_size=party_size,
-                                time_slot=time_slot,
-                                seat_type=seat_type,
-                                booking_token=str(token) if token is not None else None,
-                            )
+                token = timeslot.get("token")
+                party_size = _slot_party_size(timeslot, fallback_party)
+                for seat_type in _seating_types(timeslot):
+                    slots.append(
+                        Slot(
+                            date=date,
+                            party_size=party_size,
+                            time_slot=time_slot,
+                            seat_type=seat_type,
+                            booking_token=str(token) if token is not None else None,
                         )
+                    )
 
     return ParsedPoll(
         restaurant_id=raw.restaurant_id,
