@@ -20,7 +20,7 @@ import signal
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
-from aiokafka.errors import CommitFailedError
+from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 from redis.asyncio import Redis
 
@@ -323,11 +323,19 @@ class StateMachineConsumer:
 
         A group rebalance mid-message makes this raise; log it and let redelivery happen — the
         claim plus the AVAILABLE record make reprocessing a no-op (research Pitfall 4).
+
+        `KafkaError` and not `CommitFailedError`: aiokafka documents TWO rebalance outcomes for
+        `commit` — `CommitFailedError` (group membership changed) and `IllegalStateError`
+        ("if partitions not assigned") — plus a plain `KafkaError` for broker-side failures.
+        `IllegalStateError` is a SIBLING of `CommitFailedError` under `KafkaError`, not a
+        subclass, so naming only the latter left the other two uncaught. This method is called
+        outside `handle_message`'s try block, so an uncaught commit error propagates through
+        `run()` and terminates the service — a rebalance would kill the consumer outright.
         """
         topic_partition = TopicPartition(msg.topic, msg.partition)
         try:
             await self.consumer.commit({topic_partition: msg.offset + 1})
-        except CommitFailedError as exc:
+        except KafkaError as exc:
             log.warning(
                 "offset_commit_failed",
                 topic=msg.topic,

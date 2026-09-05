@@ -1,4 +1,4 @@
-"""Unit: WR-01 — a poison message is committed, a transient failure is NOT.
+"""Unit: WR-01/WR-02 — what gets committed, and what a failing commit is allowed to do.
 
 `handle_message` used one blanket `except Exception` and then committed unconditionally, so a
 Redis timeout, a broker outage or a producer failure discarded the buffered state and marked
@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiokafka.errors import CommitFailedError, IllegalStateError, KafkaError
 
 from services.poller.sources.opentable.fixtures import OPENTABLE_SUCCESS_RESPONSE
 from services.state_machine.consumer import StateMachineConsumer
@@ -121,3 +122,33 @@ async def test_a_transient_failure_on_polls_completed_does_not_commit(monkeypatc
     )
 
     assert consumer.commit.await_count == 0
+
+
+# -- WR-02: every documented rebalance/broker outcome of `commit` must be survivable --
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        CommitFailedError("group membership changed"),
+        IllegalStateError("partitions not assigned"),
+        KafkaError("broker is unhappy"),
+    ],
+    ids=["commit_failed", "illegal_state", "kafka_error"],
+)
+async def test_a_failing_commit_never_kills_the_service(monkeypatch, exc) -> None:
+    """`_commit` runs OUTSIDE handle_message's try, so an escape terminates run()."""
+    shell, consumer = _shell(monkeypatch)
+    consumer.commit.side_effect = exc
+
+    await shell.handle_message(_good_msg())  # must not raise
+
+    assert consumer.commit.await_count == 1
+
+
+def test_illegal_state_error_is_a_sibling_of_commit_failed_not_a_subclass() -> None:
+    """Pin the hierarchy the fix depends on: only `KafkaError` covers all three."""
+    assert not issubclass(IllegalStateError, CommitFailedError)
+    assert issubclass(IllegalStateError, KafkaError)
+    assert issubclass(CommitFailedError, KafkaError)
