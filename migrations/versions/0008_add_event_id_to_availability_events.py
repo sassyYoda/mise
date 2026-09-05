@@ -1,5 +1,8 @@
 """0008: Add event_id + unique (event_id, time) to availability_events (D-48a, corrected).
 
+Destroys nothing: the upgrade refuses to run against a non-empty table rather than
+deleting the rows it cannot backfill (see the guard in upgrade()).
+
 Corrects three defects research reproduced as hard runtime errors:
   B-2 — a unique index on a hypertable must include the partitioning column "time";
         D-48's literal `(restaurant_id, event_id)` cannot be created at all.
@@ -23,14 +26,31 @@ def upgrade() -> None:
     # NEVER use `alembic revision --autogenerate` on a hypertable (Pitfall 12, D-33):
     # autogenerate does not understand hypertables and will propose dropping and
     # recreating the table, destroying every chunk.
+    # This migration NEVER deletes a row. `event_id` is NOT NULL and there is no
+    # deterministic value to backfill a pre-0008 row with: the id is uuid5 over
+    # (source, rid, date, party, slot_key, first_poll_id) (D-45) and a pre-0008 row
+    # records neither slot_key nor first_poll_id. So a non-empty table is refused
+    # loudly and the operator decides, rather than silently destroying the whole
+    # hypertable's contents to make an ALTER succeed.
+    #
+    # In every environment this is a no-op: Phase 1 never wrote to availability_events
+    # (D-31), and the state machine that does write to it cannot run before 0008.
+    existing = op.get_bind().execute(
+        sa.text("SELECT count(*) FROM availability_events")
+    ).scalar_one()
+    if existing:
+        raise RuntimeError(
+            f"availability_events holds {existing} pre-0008 row(s). event_id is NOT NULL "
+            "and cannot be backfilled deterministically (the uuid5 recipe needs slot_key "
+            "and first_poll_id, neither of which a pre-0008 row carries). Refusing to "
+            "destroy them. Either archive and TRUNCATE availability_events deliberately, "
+            "or backfill event_id yourself, then re-run `alembic upgrade head`."
+        )
+
     op.add_column(
         "availability_events",
         sa.Column("event_id", PG_UUID(as_uuid=True), nullable=True),
     )
-    # The table is empty at this point (Phase 1 never wrote to it, D-31), so this
-    # guard is a no-op. It degrades a non-empty table to a truncation of rows that
-    # cannot be backfilled, rather than a failed ALTER.
-    op.execute("DELETE FROM availability_events WHERE event_id IS NULL")
     op.alter_column("availability_events", "event_id", nullable=False)
 
     # TimescaleDB: a UNIQUE index MUST include the partitioning column "time".
@@ -64,5 +84,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the index and the column.
+
+    Dropping `event_id` is lossy by nature — the ids cannot be recomputed from what is
+    left in the row — so a downgrade on a populated table means the subsequent upgrade
+    will (correctly) refuse to run until those rows are archived or removed.
+    """
     op.drop_index("uq_availability_events_event_id_time", table_name="availability_events")
     op.drop_column("availability_events", "event_id")

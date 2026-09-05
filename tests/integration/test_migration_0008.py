@@ -195,3 +195,52 @@ async def test_downgrade_then_upgrade_restores_the_same_schema(db_urls):
         assert row["data_type"] == "uuid" and row["is_nullable"] == "NO"
     finally:
         await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_a_non_empty_table_is_refused_not_deleted(db_urls):
+    """CR-03: 0008 must never `DELETE FROM availability_events`.
+
+    The original migration added `event_id` nullable and then deleted every row where it
+    was NULL — which is every pre-existing row. On any database that already held rows,
+    `alembic upgrade head` destroyed the whole hypertable's contents with no backup, no
+    count and no log. It must fail loudly instead, leaving the rows untouched.
+    """
+    env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
+    legacy_time = datetime(2026, 5, 3, 23, 0, tzinfo=UTC)
+
+    downgraded = subprocess.run(
+        ["uv", "run", "alembic", "downgrade", "-1"],
+        env=env, capture_output=True, text=True,
+    )
+    assert downgraded.returncode == 0, f"downgrade failed: {downgraded.stderr}"
+
+    conn = await asyncpg.connect(db_urls["dsn"])
+    try:
+        # A pre-0008 row: no event_id column exists at this revision.
+        await conn.execute(
+            'INSERT INTO availability_events '
+            '("time", restaurant_id, source, date, party_size) '
+            "VALUES ($1, 4242, 'opentable', $2, 2)",
+            legacy_time, date_cls(2026, 5, 3),
+        )
+
+        failed = subprocess.run(
+            ["uv", "run", "alembic", "upgrade", "head"],
+            env=env, capture_output=True, text=True,
+        )
+        assert failed.returncode != 0, "0008 must refuse to run against a non-empty table"
+        assert "pre-0008 row" in failed.stderr + failed.stdout, (
+            f"expected the explicit refusal; got {failed.stderr[-2000:]!r}"
+        )
+
+        survivors = await conn.fetchval(
+            'SELECT count(*) FROM availability_events WHERE "time" = $1', legacy_time
+        )
+        assert survivors == 1, "the migration deleted a row it was refusing to migrate"
+    finally:
+        await conn.execute('DELETE FROM availability_events WHERE "time" = $1', legacy_time)
+        await conn.close()
+
+    # Restore the module's schema for anything that runs after this test.
+    apply_migrations(env)
