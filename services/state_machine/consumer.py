@@ -36,7 +36,7 @@ from services.state_machine.models import Close, Decision, Emit, Expedite, SlotS
 from services.state_machine.parsers import ParseError, parse_raw
 from services.state_machine.persistence import close_event, epoch_ms_to_utc, insert_event
 from services.state_machine.store import BufferedStateStore
-from shared.events import AvailabilityRaw, PollCompleted
+from shared.events import FAILED_POLL_STATUSES, AvailabilityRaw, PollCompleted
 from shared.redis_keys import (
     EVENT_IDEMPOTENCY_TTL_SECONDS,
     event_idempotency_key,
@@ -489,8 +489,18 @@ class StateMachineConsumer:
         await self._flush()
 
     async def _handle_completed(self, msg: Any) -> None:
+        """
+        One polls.completed message: every non-success status marks the restaurant UNKNOWN.
+
+        The test is `== "success"`, INVERTED from the `not in ("error", "timeout")` this used to
+        be (D-67a, research B-7). The old form was an allowlist of failures, so Phase 3's
+        `"banned"` would have fallen through to the early return and a soft-banned restaurant
+        would have been recorded as healthy — slots left standing, no UNKNOWN, no Close. The
+        inverted form is also what makes a status added AFTER this commit safe by default: an
+        unrecognised status is precisely when assuming health is most expensive.
+        """
         completed = PollCompleted.model_validate_json(msg.value)
-        if completed.status not in ("error", "timeout"):
+        if completed.status == "success":
             # A success carries no new information here: the matching availability.raw message
             # is what advances state (D-47).
             return
@@ -501,6 +511,9 @@ class StateMachineConsumer:
             restaurant_id=completed.restaurant_id,
             poll_id=str(completed.poll_id),
             status=completed.status,
+            # False means the schema grew a status this build has never been told about. It is
+            # still handled (UNKNOWN, per the docstring), but it is worth seeing in the logs.
+            known_failure=completed.status in FAILED_POLL_STATUSES,
         )
 
     async def _apply(self, decision: Decision, now_ms: int) -> None:

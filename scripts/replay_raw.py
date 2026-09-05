@@ -50,7 +50,7 @@ from services.state_machine.engine import DiffEngine
 from services.state_machine.models import Decision, Emit
 from services.state_machine.parsers import ParseError, parse_raw
 from services.state_machine.store import MemoryStateStore
-from shared.events import AvailabilityRaw, PollCompleted
+from shared.events import FAILED_POLL_STATUSES, AvailabilityRaw, PollCompleted
 from shared.redis_keys import CONFIRM_DELAY_MS
 
 # Topic names (D-27, D-45). Kept as literals rather than imported from the consumer module:
@@ -107,10 +107,29 @@ async def _handle_raw(engine: DiffEngine, value: Any) -> list[Decision]:
 
 
 async def _handle_completed(engine: DiffEngine, value: Any) -> None:
-    """One polls.completed message: only error/timeout matters here (D-47)."""
+    """
+    One polls.completed message: every non-success status marks the restaurant UNKNOWN (D-47).
+
+    Kept character-for-character equivalent to
+    `services/state_machine/consumer.py::_handle_completed` (D-67a). These two functions live in
+    different files with different lifecycles — a long-running service and an offline debugging
+    CLI — and have already drifted apart once, each hard-coding its own `("error", "timeout")`
+    tuple. A divergence here is worse than it looks: replay is the tool you reach for to explain
+    a production incident, so a `banned` poll that means "failure" in production and "success"
+    in replay makes the explanation wrong exactly when it matters.
+    `tests/unit/test_banned_marks_unknown.py` drives both and asserts they agree.
+    """
     completed = PollCompleted.model_validate(value)
-    if completed.status in ("error", "timeout"):
-        await engine.mark_unknown(completed.restaurant_id, completed.polled_at_epoch_ms)
+    if completed.status == "success":
+        return
+    if completed.status not in FAILED_POLL_STATUSES:
+        # Handled anyway — the branch above is `!= "success"`, not an allowlist — but a status
+        # this build has never heard of is worth a line on stderr while replaying an incident.
+        logging.getLogger(__name__).warning(
+            "polls.completed carries unrecognised status %r; treated as a failed poll",
+            completed.status,
+        )
+    await engine.mark_unknown(completed.restaurant_id, completed.polled_at_epoch_ms)
 
 
 async def replay(

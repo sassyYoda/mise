@@ -38,7 +38,7 @@ A slot is identified by `(source, restaurant_id, date, party_size, time_slot, se
 | AVAILABLE | still seen | AVAILABLE | nothing (refreshes `last_seen` and the rotated token) |
 | AVAILABLE | absent on a successful *covered* poll | UNAVAILABLE | nothing on Kafka; the DB row is closed with `duration_seconds` |
 | UNAVAILABLE / absent | seen again | PENDING | nothing — a re-open is a brand-new cycle with a new `event_id` |
-| any | poll errored, timed out, or was unparseable | unchanged | nothing; the restaurant meta is marked UNKNOWN |
+| any | poll errored, timed out, was soft-banned, or was unparseable | unchanged | nothing; the restaurant meta is marked UNKNOWN |
 
 UNKNOWN is a **restaurant-level** mark, never a slot state: `SlotState` has three members and
 no UNKNOWN, because an errored poll must leave every slot at its last known state (D-41).
@@ -50,6 +50,26 @@ Two rules keep this honest:
   adapter did not really request, closes nothing (D-38, D-38a).
 * **UNKNOWN never moves a slot toward UNAVAILABLE**, and the mark is monotonic in poll time —
   a stale error cannot re-mark a restaurant whose newer poll succeeded (D-53).
+* **Every non-success poll status marks UNKNOWN** (D-67a). Both `_handle_completed` functions —
+  the consumer's and `scripts/replay_raw.py`'s — branch on `status == "success"` and treat
+  everything else as a failed poll, so a status added to `PollCompleted` later is safe by
+  default. The known non-success statuses live in exactly ONE place,
+  `shared.events.FAILED_POLL_STATUSES` (`error`, `timeout`, `banned`), because both call sites
+  previously hard-coded their own `("error", "timeout")` tuple and Phase 3's `banned` would
+  have read as a healthy poll in both.
+
+## `banned` is a poll outcome, not an engine concern (D-67, D-67a)
+
+Phase 3's Resy fleet publishes `polls.completed` with `status="banned"` when the soft-ban canary
+fires. That poll observed nothing, so the restaurant is marked UNKNOWN and every slot stays at
+its last known state — identical treatment to `error` and `timeout`, and the reason the canary
+can pause the fleet without a wave of false closures.
+
+This is a **shell-side** widening and leaves the diff engine untouched. SC5 forbids
+source-specific branching in the diff LOGIC; `DiffEngine` never sees a poll status at all, only
+a `ParsedPoll` or a `mark_unknown` call. `git diff services/state_machine/engine.py` across
+Phase 3 plan 01 is empty, and `tests/unit/test_tracer_resy_raw_to_event.py` scans `engine.py`
+for source-platform literals so the claim cannot decay silently.
 
 ## Emit ordering (D-46)
 

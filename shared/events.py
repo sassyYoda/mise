@@ -1,7 +1,8 @@
 """
 Pydantic v2 Kafka message schemas.
 Single source of truth for all Kafka message contracts (D-06).
-Named symbols: AvailabilityRaw, PollCompleted, AvailabilityEvent, NAMESPACE_MISE, make_event_id
+Named symbols: AvailabilityRaw, PollCompleted, AvailabilityEvent, NAMESPACE_MISE,
+              FAILED_POLL_STATUSES, make_event_id
 """
 from __future__ import annotations
 
@@ -18,6 +19,22 @@ from pydantic import BaseModel, ConfigDict
 # replay (STATE-06). It is a hard-coded literal on purpose — deriving it at import
 # from a URL would let a future URL edit rewrite history.
 NAMESPACE_MISE: Final[UUID] = UUID("629d45e6-9621-5f62-a1ea-dd826ede29f8")
+
+# Every poll status that is NOT a success (D-67a, research B-7).
+#
+# This exists because two independent consumers — services/state_machine/consumer.py and
+# scripts/replay_raw.py — each hard-coded the tuple `("error", "timeout")`. Adding `"banned"`
+# to the Literal below without touching them would have left a soft ban reading as a healthy
+# poll in both: no UNKNOWN mark, stale slots left standing, and the exact fleet-wide blindness
+# the POLL-06 canary exists to surface hidden from the state machine.
+#
+# NOTE WHAT THIS SET IS *NOT*. Neither consumer branches on membership here — both branch on
+# `!= "success"`, so a status this project adds LATER is treated as a failure by code that has
+# never heard of it. An allowlist would have re-created the original bug one status at a time.
+# This frozenset is the registry of KNOWN failure statuses, for logs, dashboards and
+# `poll_log.status` semantics; `tests/unit/test_events_schema.py` asserts it stays exactly the
+# non-success members of PollCompleted.status, so the two are edited together or CI fails.
+FAILED_POLL_STATUSES: Final[frozenset[str]] = frozenset({"error", "timeout", "banned"})
 
 
 def make_event_id(
@@ -80,17 +97,33 @@ class AvailabilityRaw(BaseModel):
 
 
 class PollCompleted(BaseModel):
-    """Emitted to polls.completed after each poll attempt."""
+    """
+    Emitted to polls.completed after each poll attempt.
+
+    `status` is a closed Literal, never free text: `poll_log.status` is a TEXT column with no
+    CHECK constraint, so this model is the only thing standing between a typo'd status and a
+    dashboard that silently under-counts failures. `"banned"` is the Phase-3 addition (D-67) —
+    a soft ban is neither an `error` (nothing went wrong on the wire) nor a `success` (nothing
+    was observed), and every non-success status marks the restaurant UNKNOWN; see
+    FAILED_POLL_STATUSES.
+
+    Field declaration order is the JSON wire order, exactly as it is for AvailabilityEvent, so
+    a new field may only be APPENDED. `context_id` is therefore last. It names the Playwright
+    browser context that issued the poll, for per-context latency in Grafana (D-67) and for
+    attributing a ban to the context that must be recycled; it is None for every source that
+    has no context pool.
+    """
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     poll_id: UUID
     source: Literal["opentable", "resy"]
     restaurant_id: int
     polled_at_epoch_ms: int
-    status: Literal["success", "error", "timeout"]
+    status: Literal["success", "error", "timeout", "banned"]
     latency_ms: int
     http_status: int | None = None
     error: str | None = None
+    context_id: str | None = None
 
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
