@@ -1,0 +1,166 @@
+# State machine service
+
+Consumes `availability.raw` and `polls.completed`, normalises each source's payload into slot
+records, diffs them against Redis state with a tri-state model, and emits a confirmed
+`availability.events` message the moment a slot has been seen open by two independent
+successful polls at least `CONFIRM_DELAY_MS` apart. Confirmed events are also written to the
+`availability_events` TimescaleDB hypertable, and a slot that later vanishes has its row closed
+with a `duration_seconds` — closures are database-only and never reach Kafka. The service never
+calls OpenTable or Resy itself and never waits out the confirmation delay in process: it lowers
+the restaurant's due score in the poller's ZSET, and the confirmation arrives as another
+message (D-43, STATE-03).
+
+Run it with `uv run python -m services.state_machine` against a `make up` stack.
+
+## Layout
+
+| File | Role |
+|------|------|
+| `engine.py` | Pure diff core. No I/O, no clock read, no entropy — this is what makes replay byte-identical (D-49). |
+| `models.py` | Value types: `SlotState`, `Slot`, `ParsedPoll`, `SlotRecord`, and the `Expedite` / `Emit` / `Close` decisions. |
+| `parsers/` | Per-source registry. Phase 2 registers `opentable`; `resy` raises `UnsupportedSourceError` until Phase 3. |
+| `store.py` | `MemoryStateStore` (replay, tests), `RedisStateStore` (production), `BufferedStateStore` (write-behind, see below). |
+| `consumer.py` | The imperative shell. Every side effect lives here and nowhere else. |
+| `persistence.py` | Best-effort hypertable insert and close, plus the New York service-time math. |
+| `main.py` | Lifecycle: topic guard, Redis, scheduler, producer, consumer, teardown. |
+
+## State transitions (D-41)
+
+A slot is identified by `(source, restaurant_id, date, party_size, time_slot, seat_type)`. The
+`booking_token` is data, not identity — tokens rotate between polls for the same physical slot.
+
+| From | Trigger | To | Emits |
+|------|---------|----|-------|
+| absent | slot seen on a successful poll | PENDING | nothing (the next poll is expedited to t+8 s) |
+| PENDING | seen again, `polled_at - first_seen >= CONFIRM_DELAY_MS` | AVAILABLE | `availability.events` + a hypertable row |
+| PENDING | seen again, but sooner than `CONFIRM_DELAY_MS` | PENDING | nothing (an accidental duplicate poll cannot confirm) |
+| PENDING | absent on the next successful *covered* poll | dropped | nothing — this is the false-positive guard |
+| AVAILABLE | still seen | AVAILABLE | nothing (refreshes `last_seen` and the rotated token) |
+| AVAILABLE | absent on a successful *covered* poll | UNAVAILABLE | nothing on Kafka; the DB row is closed with `duration_seconds` |
+| UNAVAILABLE / absent | seen again | PENDING | nothing — a re-open is a brand-new cycle with a new `event_id` |
+| any | poll errored, timed out, or was unparseable | unchanged | nothing; the restaurant meta is marked UNKNOWN |
+
+Two rules keep this honest:
+
+* **Coverage bounds closure.** A slot is only closed or dropped when its `(date, party_size)`
+  was actually observed by that poll. A date window that rolls forward, or a party size the
+  adapter did not really request, closes nothing (D-38, D-38a).
+* **UNKNOWN never moves a slot toward UNAVAILABLE**, and the mark is monotonic in poll time —
+  a stale error cannot re-mark a restaurant whose newer poll succeeded (D-53).
+
+## Emit ordering (D-46)
+
+```
+   message
+      |
+      v
+  [ DiffEngine.process ]  -- decisions as data, no I/O
+      |
+      +--> Expedite: ZADD sched:polls XX LT (poll_time + 8000)
+      |
+      +--> Emit, per slot, in this order and no other:
+      |       1. SET event:{rid}:{date}:{party}:{token} 1 NX EX 1200   <- Layer-1 claim, one command
+      |       2. producer.send_and_wait("availability.events", ...)    <- acks=all, never a bare send
+      |       3. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write
+      |       4. INSERT ... ON CONFLICT (event_id, "time") DO NOTHING  <- best effort
+      |
+      +--> Close: UPDATE ... WHERE event_id = ? AND "time" = ?         <- DB only, no Kafka
+      |
+      v
+  consumer.commit({tp: offset + 1})     <- after the WHOLE message, never before
+```
+
+The order is not stylistic. Each step is placed so that a crash at any point is safe:
+
+| Crash point | Redis `event:*` | Kafka | Redis state | Offset | Restart behaviour |
+|-------------|-----------------|-------|-------------|--------|-------------------|
+| before `SET NX` | absent | none | PENDING | uncommitted | full re-diff, emits once |
+| after `SET NX`, before send | present | none | PENDING | uncommitted | NX fails + state PENDING → **re-send** same deterministic `event_id` (Layer-2 dedupes in P4) |
+| after send, before state write | present | sent | PENDING | uncommitted | same as above — one duplicate on the wire, identical `event_id` |
+| after state write, before commit | present | sent | AVAILABLE | uncommitted | NX fails + state AVAILABLE → **skip**. This is the D-51 chaos path. Zero duplicates. |
+| after commit | present | sent | AVAILABLE | committed | not redelivered |
+
+Two implementation notes that make the table true rather than aspirational:
+
+* **`BufferedStateStore` exists for row 2 and row 3.** The engine writes through its store as it
+  diffs, so a bare `RedisStateStore` would record AVAILABLE *before* the Kafka send — and a
+  crash in that window would leave a record the next diff reads as already-emitted, losing the
+  opening for good. The shell buffers the engine's writes and flushes them at step 3.
+* **On the row-4 restart the skip happens one layer earlier than the table suggests.** The
+  redelivered poll now finds the slot AVAILABLE, so the engine produces no `Emit` at all and
+  the shell's claim branch is never reached. The outcome — zero duplicates — is identical, and
+  `tests/integration/test_state_machine_chaos.py` proves it with a real `SIGKILL`.
+
+The offset is committed even for a poison message, after the failure is logged: a message that
+cannot be parsed must never stall the partition. Unparseable payloads mark the restaurant
+UNKNOWN and remove nothing (D-39).
+
+## Redis keys
+
+All key patterns and TTLs are declared in `shared/redis_keys.py` — never inline a key string
+here (D-42).
+
+| Key | Type | TTL | Contents |
+|-----|------|-----|----------|
+| `avail:{rid}:{date}:{party}` | HASH | 90000 s (25 h) | field = `{time_slot}\|{seat_type or '-'}`, value = compact JSON slot record |
+| `avail:{rid}:meta` | HASH | 90000 s | `unknown_since_ms`, `last_success_ms` |
+| `event:{rid}:{date}:{party}:{token}` | STRING | 1200 s | the Layer-1 emission claim |
+| `sched:expedite:{source}:{rid}` | STRING | 120 s | set when the job is in flight; the poller consumes it with `GETDEL` |
+
+The TTL is **key-level and refreshed on every write**, deliberately. Per-field hash TTL
+(`HEXPIRE`) is a Redis 7.4 *server* feature; redis-py 7.4.0 has the client method, so using it
+would lint clean and fail only at runtime against the pinned `redis:7.2-alpine`.
+
+## How to join
+
+`restaurant_id` — on the wire, in the Redis keys above, in `AvailabilityEvent`, and in the
+`availability_events.restaurant_id` column — is the **source platform id** (the OpenTable rid,
+the Resy venue id), exactly as `poll_log.restaurant_id` already is. It is **not**
+`restaurants.id` (D-52).
+
+Phases 4, 5 and 6 must therefore join on the pair:
+
+```sql
+SELECT ...
+FROM availability_events e
+JOIN restaurants r
+  ON r.source = e.source
+ AND r.platform_id = e.restaurant_id::text   -- platform_id is TEXT
+```
+
+Joining `r.id = e.restaurant_id` compiles, runs, and silently returns zero rows. The same
+statement is recorded in the database itself as a `COMMENT ON COLUMN` (migration 0008).
+
+## Scaling
+
+`availability.raw` has **one partition**, so this service scales by partition count, not by
+replica count. A second member of the `state-machine` consumer group would simply idle with no
+partition assigned — it is a warm standby, not extra throughput. Per-restaurant ordering is
+guaranteed by the `{source}:{restaurant_id}` Kafka key, so partition count can be raised later
+without breaking the diff. At the MVP's ~400 events/day, one consumer is far from saturated.
+
+## Replay
+
+```
+uv run python scripts/replay_raw.py --help
+```
+
+The replay script (plan 02-04) feeds raw messages through `DiffEngine(MemoryStateStore())` and
+writes one canonical event per line, byte-identical to what the consumer put on the wire.
+`--to-offset` is **EXCLUSIVE** and defaults to the topic's end offsets, so `--from-offset 2
+--to-offset 5` replays offsets 2, 3 and 4 (D-55). Replay never joins the `state-machine`
+consumer group, so it cannot move production offsets.
+
+## Environment
+
+| Name | Default | Notes |
+|------|---------|-------|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` | Same default as the poller — the two must agree. |
+| `REDIS_URL` | `redis://localhost:6379/0` | Slot state, the emission claim and the scheduler ZSET. |
+| `DATABASE_URL_ASYNC` | `postgresql+asyncpg://mise:mise@localhost:5432/mise` | Analytics writes only; a failure is logged, never fatal. |
+| `CONFIRM_DELAY_MS` | `8000` | Confirmation window. Single source of truth is `shared/redis_keys.py`. |
+| `ENV` | `dev` | `prod` refuses to start with the crash hook set. |
+| `MISE_CRASH_AFTER` | unset | **TEST ONLY.** SIGKILLs the process after the named stage (`nx_claim`, `kafka_send`, `state_write`, `commit`) so the chaos test can prove crash safety. `main.run()` raises if it is set while `ENV=prod`. |
+
+Every variable is read lazily, inside `run()`, never frozen into a module constant at import
+time — that is what lets an integration test point the service at a container after collection.

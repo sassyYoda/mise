@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: up down migrate seed poll test test-integration lint fmt smoke verify-seed verify-perf02 help topics
+.PHONY: up down migrate seed poll state-machine test test-integration lint fmt smoke verify-seed verify-perf02 help topics
 
 up: ## Start all infrastructure containers (Kafka, Redis, Postgres+TimescaleDB, Kafka UI)
 	docker compose -f ops/docker-compose.yml up -d
@@ -19,6 +19,9 @@ seed: ## Seed 50 NYC restaurants from scripts/seed/restaurants.yml
 
 poll: ## Run OpenTable poller on host
 	uv run python -m services.poller
+
+state-machine: ## Run the state machine consumer on host
+	uv run python -m services.state_machine
 
 test: ## Run unit tests
 	uv run pytest tests/unit -x -q
