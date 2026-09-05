@@ -6,12 +6,11 @@ Runs entirely in-process — no Redis, no Kafka, no Postgres, no network, no wal
 """
 from __future__ import annotations
 
+from services.poller.sources.opentable.fixtures import OPENTABLE_SUCCESS_RESPONSE
 from services.state_machine.engine import DiffEngine
 from services.state_machine.models import Emit, Expedite
 from services.state_machine.parsers import parse_raw
 from services.state_machine.store import MemoryStateStore
-
-from services.poller.sources.opentable.fixtures import OPENTABLE_SUCCESS_RESPONSE
 from shared.events import AvailabilityEvent
 from tests.unit.factories import make_raw
 

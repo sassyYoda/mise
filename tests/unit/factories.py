@@ -10,7 +10,6 @@ from typing import Any
 from uuid import UUID, uuid5
 
 from services.state_machine.models import ParsedPoll, Slot
-
 from shared.events import NAMESPACE_MISE, AvailabilityRaw
 
 
