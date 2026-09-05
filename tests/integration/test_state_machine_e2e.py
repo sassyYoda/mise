@@ -100,15 +100,18 @@ async def _await_condition(
 
 @pytest.mark.asyncio
 async def test_raw_polls_become_one_event_one_row_and_a_closure(
-    kafka_container, redis_url, db_urls
+    kafka_container, redis_url, db_urls, monkeypatch
 ):
     """The whole pipeline, end to end, on message timestamps alone."""
     kafka_bootstrap = kafka_container.get_bootstrap_server()
 
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = kafka_bootstrap
-    os.environ["REDIS_URL"] = redis_url
-    os.environ["DATABASE_URL_ASYNC"] = db_urls["async"]
-    os.environ["DATABASE_URL_SYNC"] = db_urls["sync"]
+    # monkeypatch, not a bare os.environ assignment: an unrestored KAFKA_BOOTSTRAP_SERVERS /
+    # REDIS_URL / DATABASE_URL_* silently binds every later test in the session to a container
+    # that has already been torn down — an order-dependent failure (WR-15).
+    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", kafka_bootstrap)
+    monkeypatch.setenv("REDIS_URL", redis_url)
+    monkeypatch.setenv("DATABASE_URL_ASYNC", db_urls["async"])
+    monkeypatch.setenv("DATABASE_URL_SYNC", db_urls["sync"])
     reset_shared_db_singletons()
 
     env = {**os.environ}

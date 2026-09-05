@@ -94,15 +94,19 @@ async def _drain_events(bootstrap: str) -> list[AvailabilityEvent]:
 
 @pytest.mark.asyncio
 async def test_sigkill_before_commit_produces_no_duplicate_events(
-    kafka_container, redis_url, db_urls
+    kafka_container, redis_url, db_urls, monkeypatch
 ):
     """SC3: crash after the state write, restart clean, and still emit exactly once."""
     bootstrap = kafka_container.get_bootstrap_server()
 
-    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = bootstrap
-    os.environ["REDIS_URL"] = redis_url
-    os.environ["DATABASE_URL_ASYNC"] = db_urls["async"]
-    os.environ["DATABASE_URL_SYNC"] = db_urls["sync"]
+    # monkeypatch, not a bare os.environ assignment: an unrestored KAFKA_BOOTSTRAP_SERVERS /
+    # REDIS_URL / DATABASE_URL_* silently binds every later test in the session to a container
+    # that has already been torn down — an order-dependent failure (WR-15). The subprocess
+    # environment is still snapshotted from os.environ below, which sees the patched values.
+    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", bootstrap)
+    monkeypatch.setenv("REDIS_URL", redis_url)
+    monkeypatch.setenv("DATABASE_URL_ASYNC", db_urls["async"])
+    monkeypatch.setenv("DATABASE_URL_SYNC", db_urls["sync"])
     reset_shared_db_singletons()
 
     base_env = {**os.environ}

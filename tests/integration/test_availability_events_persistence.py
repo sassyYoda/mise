@@ -51,12 +51,21 @@ def _event(seat_type: str, *, first_poll_id: str = "poll-a") -> AvailabilityEven
 
 @pytest.fixture(scope="module", autouse=True)
 def _migrated_and_wired(db_urls):
-    """Point shared.db at this module's container and apply every migration once."""
+    """Point shared.db at this module's container and apply every migration once.
+
+    The environment is patched through a MonkeyPatch context, not assigned into os.environ:
+    an unrestored DATABASE_URL_* leaks into every later test in the session, silently binding
+    anything that reads it to a container that has already been torn down. That is an
+    order-dependent failure that only shows up when the suite runs in a different order
+    (WR-15). `pytest.MonkeyPatch.context()` is the module-scoped equivalent of the
+    function-scoped `monkeypatch` fixture.
+    """
     apply_migrations({**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]})
-    os.environ["DATABASE_URL_ASYNC"] = db_urls["async"]
-    os.environ["DATABASE_URL_SYNC"] = db_urls["sync"]
-    reset_shared_db_singletons()
-    yield
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DATABASE_URL_ASYNC", db_urls["async"])
+        mp.setenv("DATABASE_URL_SYNC", db_urls["sync"])
+        reset_shared_db_singletons()
+        yield
     reset_shared_db_singletons()
 
 
@@ -163,9 +172,9 @@ async def test_close_with_the_wrong_time_matches_nothing(db_urls):
 
 
 @pytest.mark.asyncio
-async def test_a_database_outage_is_logged_and_never_raised(db_urls):
+async def test_a_database_outage_is_logged_and_never_raised(db_urls, monkeypatch):
     """D-48: metrics beat durability of the analytics row — the caller still emits and commits."""
-    os.environ["DATABASE_URL_ASYNC"] = "postgresql+asyncpg://mise:mise@127.0.0.1:1/mise"
+    monkeypatch.setenv("DATABASE_URL_ASYNC", "postgresql+asyncpg://mise:mise@127.0.0.1:1/mise")
     reset_shared_db_singletons()
     try:
         # Both writes must return normally against a closed port.
@@ -176,7 +185,7 @@ async def test_a_database_outage_is_logged_and_never_raised(db_urls):
             last_seen_at=CONFIRMED_AT,
         )
     finally:
-        os.environ["DATABASE_URL_ASYNC"] = db_urls["async"]
+        monkeypatch.undo()
         reset_shared_db_singletons()
 
     assert await _rows(db_urls["dsn"]) == [], "nothing may have been written during the outage"
