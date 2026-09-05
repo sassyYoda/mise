@@ -102,9 +102,14 @@ rather than aspirational:
   the shell's claim branch is never reached. The outcome — zero duplicates — is identical, and
   `tests/integration/test_state_machine_chaos.py` proves it with a real `SIGKILL`.
 
-The offset is committed even for a poison message, after the failure is logged: a message that
-cannot be parsed must never stall the partition. Unparseable payloads mark the restaurant
-UNKNOWN and remove nothing (D-39).
+The offset is committed even for a **poison** message, after the failure is logged: a payload
+that cannot be decoded will never decode, and it must never stall the partition. Unparseable
+payloads mark the restaurant UNKNOWN and remove nothing (D-39).
+
+A **transient** failure — a Redis timeout, a broker outage, a producer error — is the opposite
+case and is deliberately *not* committed, so a restart reprocesses the message rather than
+skipping it. Committing there would silently drop an observation the next attempt would have
+handled: for a `polls.completed` `error`/`timeout` that is the UNKNOWN mark lost for good.
 
 ## Redis keys
 

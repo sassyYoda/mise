@@ -21,6 +21,7 @@ from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import CommitFailedError
+from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from services.state_machine.engine import (
@@ -110,7 +111,17 @@ class StateMachineConsumer:
             await self.handle_message(msg)
 
     async def handle_message(self, msg: Any) -> None:
-        """Route one message by topic, then commit its offset whatever happened."""
+        """
+        Route one message by topic, then commit its offset — but only if it is safe to.
+
+        POISON and TRANSIENT are not the same failure and must not get the same treatment. A
+        payload that cannot be decoded will never decode, so committing it is the only way to
+        keep it from stalling the partition forever. A Redis timeout, a broker outage or a
+        producer failure is the opposite: the message is fine and the world is not, so
+        committing it would silently drop an observation that a later attempt would have
+        handled. For a polls.completed error/timeout that means losing the UNKNOWN mark
+        permanently, along with any Close that had not run yet.
+        """
         try:
             if msg.topic == RAW_TOPIC:
                 await self._handle_raw(msg)
@@ -118,7 +129,17 @@ class StateMachineConsumer:
                 await self._handle_completed(msg)
             else:
                 log.warning("unrouted_topic", topic=msg.topic, offset=msg.offset)
-        except Exception as exc:  # noqa: BLE001 — a poison message must never stall the partition
+        except (ValidationError, ParseError) as exc:
+            # Poison: undecodable now and undecodable on every redelivery. Log, drop, commit.
+            self._discard()
+            log.error(
+                "message_poison",
+                topic=msg.topic,
+                partition=msg.partition,
+                offset=msg.offset,
+                error=str(exc),
+            )
+        except Exception as exc:  # noqa: BLE001 — transient infrastructure failure
             self._discard()
             log.error(
                 "message_handling_failed",
@@ -127,6 +148,9 @@ class StateMachineConsumer:
                 offset=msg.offset,
                 error=str(exc),
             )
+            # Deliberately NOT committed: leave the offset where it is so a restart
+            # reprocesses this message instead of skipping it.
+            return
         await self._commit(msg)
 
     async def _handle_raw(self, msg: Any) -> None:
