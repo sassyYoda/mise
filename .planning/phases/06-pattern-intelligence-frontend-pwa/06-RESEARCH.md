@@ -1537,7 +1537,7 @@ Add a fifth for the gate boundary: `n=30` events spanning exactly 14 days → `r
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — see 06-CONTEXT.md amendments D-109a/D-111a/D-112a/D-116a/D-117b; OQ-1/OQ-5 folded into BC-11)
 
 1. **Which weekday does the heatmap's y-axis mean, now that BC-11 splits `day_of_week` from `dow_local`?**
    - *What we know:* FE-04 and D-114 say "y = day-of-week, Sun..Sat". `day_of_week` is the service date's weekday; `dow_local` is the observation weekday. The CAGG will carry both.
