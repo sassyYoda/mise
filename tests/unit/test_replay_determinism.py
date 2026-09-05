@@ -333,3 +333,15 @@ def test_the_offset_path_and_the_input_path_fail_the_same_way(tmp_path: Path) ->
 
     with pytest.raises(InputError):
         records_to_envelopes("availability.raw", [_FakeRecord(0, b"{not json")])
+
+
+def test_make_lint_type_checks_the_scripts_directory() -> None:
+    """IN-05: replay_raw.py carries the byte-identity guarantee and must be strict-checked.
+
+    `mypy shared/ services/` left ~400 lines of it outside strict checking entirely.
+    """
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    mypy_lines = [ln.strip() for ln in makefile.splitlines() if "mypy" in ln and "uv run" in ln]
+    assert mypy_lines, "no mypy invocation found in the Makefile"
+    for line in mypy_lines:
+        assert "scripts/" in line, f"{line!r} does not type-check scripts/"

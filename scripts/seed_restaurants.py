@@ -35,19 +35,31 @@ async def seed(
     Upsert restaurants from YAML and seed sched:polls.
     Returns number of restaurants processed.
     """
-    db_url = db_url or os.getenv(
-        "DATABASE_URL_ASYNC",
-        "postgresql+asyncpg://mise:mise@localhost:5432/mise",
+    # New names rather than reassignment, and an explicit `is not None` rather than `or`:
+    # the parameters are declared `str | None`, so rebinding them keeps that declared type,
+    # and mypy types `optional or fallback` as optional too. Both forms left every downstream
+    # call typed as possibly-None under `mypy --strict`, which now covers scripts/ (IN-05).
+    resolved_db_url: str = (
+        db_url
+        if db_url is not None
+        else os.getenv(
+            "DATABASE_URL_ASYNC",
+            "postgresql+asyncpg://mise:mise@localhost:5432/mise",
+        )
     )
-    redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    resolved_redis_url: str = (
+        redis_url
+        if redis_url is not None
+        else os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    )
 
     data = yaml.safe_load(YAML_PATH.read_text())
     restaurants: list[dict[str, Any]] = data["restaurants"]
 
-    engine = create_async_engine(db_url, echo=False)
+    engine = create_async_engine(resolved_db_url, echo=False)
     async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    r = redis.from_url(redis_url)
+    r = redis.from_url(resolved_redis_url)
     try:
         async with async_session() as session:
             for rest in restaurants:

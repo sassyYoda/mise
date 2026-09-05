@@ -586,6 +586,7 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
     { name = "testcontainers", extra = ["redis"] },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -626,6 +627,7 @@ dev = [
     { name = "respx", specifier = ">=0.21" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "testcontainers", extras = ["kafka", "redis", "postgres"], specifier = ">=4.8" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260815" },
 ]
 
 [[package]]
@@ -1287,6 +1289,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b5/97/c439bc2c058f8a24edd732f5cc82adedd8794bcc2da0836c2eff1e2dbe91/twilio-9.10.5.tar.gz", hash = "sha256:d9f93b9280349ee7b52e7f17a0600fd7bfd0f7ff88eb00c40270164bc058743f", size = 1641690, upload-time = "2026-04-14T09:52:09.392Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/97/4fdde5e54fcbb789aa1a70c371f2f33d7eb1e58e8a6131fdbd8a98490976/twilio-9.10.5-py2.py3-none-any.whl", hash = "sha256:7972db54496fbf501b238f34d1f717f80ff22720313dc706632787aad5934997", size = 2284944, upload-time = "2026-04-14T09:52:07.333Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260815"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/72/b56089aeee6c496d969bac42376bedb6e3eeab4682e1018fa3137122f94b/types_pyyaml-6.0.12.20260815.tar.gz", hash = "sha256:28764110c9cf35846e733da32d8d734df7473c5dde9ef67c3b7332ec0e819858", size = 18545, upload-time = "2026-08-15T02:41:51.532Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/52/eefeba09be4ef2a1eb989eb92934561e8e502a6ee3c32654996e4be7e399/types_pyyaml-6.0.12.20260815-py3-none-any.whl", hash = "sha256:6f332212b7e191f3afd5016a713c510b6340593b7ebec573c7d5d20aa5386d3b", size = 21148, upload-time = "2026-08-15T02:41:50.555Z" },
 ]
 
 [[package]]

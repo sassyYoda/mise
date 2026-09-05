@@ -32,9 +32,9 @@ test: ## Run unit tests
 test-integration: ## Run integration tests (requires running infra)
 	uv run pytest tests/unit tests/integration -v
 
-lint: ## Run ruff check + mypy
+lint: ## Run ruff check + mypy (scripts/ included: replay_raw.py carries the byte-identity claim)
 	uv run ruff check .
-	uv run mypy shared/ services/
+	uv run mypy shared/ services/ scripts/
 
 fmt: ## Format code with ruff
 	uv run ruff format .
