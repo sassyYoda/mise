@@ -2,6 +2,10 @@
 
 Implements D-18 (visibility-timeout claim/release) and D-17 (next poll score =
 ``now_ms + 90_000 + uniform(-13_500, 13_500)`` — 90s +/- 15% jitter).
+
+D-43: when the state machine has left an expedite flag for this job, the release
+uses ``now_ms + CONFIRM_DELAY_MS`` instead, so a PENDING slot is re-verified at
+t+8s. The flag is consumed with a single GETDEL, so it fires exactly once.
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ import httpx
 from services.poller.config import DEFAULT_DATE_RANGE_DAYS, DEFAULT_PARTY_SIZES
 from services.poller.publisher import Publisher
 from services.poller.sources.opentable.adapter import OpenTableAdapter
-from shared.redis_keys import POLL_INTERVAL_SECONDS, POLL_JITTER_FRACTION
+from shared.redis_keys import CONFIRM_DELAY_MS, POLL_INTERVAL_SECONDS, POLL_JITTER_FRACTION
 from shared.scheduler.lua import LuaScheduler
 from shared.telemetry import get_logger
 
@@ -135,5 +139,15 @@ async def poll_loop(
             error=error_str,
         )
 
-        next_score = _next_poll_score(int(time.time() * 1000))
+        release_now_ms = int(time.time() * 1000)
+        expedited = await scheduler.consume_expedite(job)
+        next_score = (
+            release_now_ms + CONFIRM_DELAY_MS if expedited else _next_poll_score(release_now_ms)
+        )
+        if expedited:
+            log.info(
+                "poll_expedited",
+                restaurant_id=restaurant_id,
+                next_score=next_score,
+            )
         await scheduler.release(job, next_score)

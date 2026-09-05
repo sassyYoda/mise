@@ -1,7 +1,8 @@
 """
 Single source of truth for ALL Redis key patterns and TTLs (D-18).
 Any Redis access in services/ MUST import from here.
-Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT
+Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT, sched_expedite_key,
+               CONFIRM_DELAY_MS, EXPEDITE_FLAG_TTL_SECONDS, EXPEDITE_POLL_LUA
 """
 from __future__ import annotations
 
@@ -34,6 +35,16 @@ async def set_nx_ex(r: Redis, key: str, value: str, ttl_seconds: int) -> bool:
     """
     result = await r.set(key, value, nx=True, ex=ttl_seconds)
     return result is True
+
+
+# -- Confirmation expedite (D-43, STATE-03) --
+CONFIRM_DELAY_MS: int = 8_000            # D-43: a PENDING slot re-verifies at t+8s
+EXPEDITE_FLAG_TTL_SECONDS: int = 120     # D-43: the in-flight flag expires on its own
+
+
+def sched_expedite_key(job: str) -> str:
+    """Return the expedite-flag key 'sched:expedite:{job}' for an in-flight poll (D-43)."""
+    return f"sched:expedite:{job}"
 
 
 # -- Lua scripts (D-18) --
@@ -72,4 +83,26 @@ for _, job in ipairs(expired) do
   redis.call('ZADD', KEYS[2], ARGV[1], job)
 end
 return expired
+"""
+
+EXPEDITE_POLL_LUA = """
+-- KEYS[1] = sched:polls
+-- KEYS[2] = sched:expedite:{source}:{restaurant_id}
+-- ARGV[1] = now_ms
+-- ARGV[2] = job descriptor '{source}:{restaurant_id}'
+-- ARGV[3] = confirm_delay_ms (8000)
+-- ARGV[4] = expedite flag TTL seconds (120)
+-- Returns 'zset' if the queued job was pulled forward, 'flag' if the job is in flight.
+-- 'XX' is mandatory: without it a ZADD would resurrect an in-flight job into the
+-- ready set, producing a duplicate concurrent poll for that restaurant.
+-- 'LT' is mandatory: without it an already-sooner poll would be pushed later.
+-- Plain ZADD and 'GT' are both wrong here.
+local target = tonumber(ARGV[1]) + tonumber(ARGV[3])
+if redis.call('ZSCORE', KEYS[1], ARGV[2]) then
+  redis.call('ZADD', KEYS[1], 'XX', 'LT', target, ARGV[2])
+  return 'zset'
+else
+  redis.call('SET', KEYS[2], '1', 'EX', tonumber(ARGV[4]))
+  return 'flag'
+end
 """

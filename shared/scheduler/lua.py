@@ -1,7 +1,8 @@
 """
 Lua scripts for atomic Redis ZSET scheduler operations (D-18).
 All three scripts use EVALSHA with fallback to EVAL on NOSCRIPT error.
-Named symbols: CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA (re-exported from shared.redis_keys)
+Named symbols: CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA, EXPEDITE_POLL_LUA
+               (all re-exported from shared.redis_keys)
 """
 from __future__ import annotations
 
@@ -13,11 +14,15 @@ from redis.exceptions import NoScriptError
 
 from shared.redis_keys import (
     CLAIM_POLL_LUA,
+    CONFIRM_DELAY_MS,
+    EXPEDITE_FLAG_TTL_SECONDS,
+    EXPEDITE_POLL_LUA,
     POLL_VISIBILITY_TIMEOUT_MS,
     REAP_INFLIGHT_LUA,
     RELEASE_POLL_LUA,
     SCHED_POLLS,
     SCHED_POLLS_INFLIGHT,
+    sched_expedite_key,
 )
 
 
@@ -32,12 +37,14 @@ class LuaScheduler:
         self._claim_sha: str | None = None
         self._release_sha: str | None = None
         self._reap_sha: str | None = None
+        self._expedite_sha: str | None = None
 
     async def start(self) -> None:
         """Load Lua scripts into Redis and cache SHAs."""
         self._claim_sha = await self.r.script_load(CLAIM_POLL_LUA)
         self._release_sha = await self.r.script_load(RELEASE_POLL_LUA)
         self._reap_sha = await self.r.script_load(REAP_INFLIGHT_LUA)
+        self._expedite_sha = await self.r.script_load(EXPEDITE_POLL_LUA)
 
     async def _evalsha_with_fallback(
         self, sha: str, script: str, numkeys: int, *args: Any
@@ -84,3 +91,30 @@ class LuaScheduler:
         if not jobs:
             return []
         return [j.decode() if isinstance(j, (bytes, bytearray)) else str(j) for j in jobs]
+
+    async def expedite(self, job: str, now_ms: int) -> str:
+        """
+        Pull a PENDING restaurant's next poll forward to ``now_ms + CONFIRM_DELAY_MS`` (D-43).
+
+        Returns ``'zset'`` when the job was queued and its score was lowered, or
+        ``'flag'`` when the job is in flight and a self-expiring expedite flag was
+        left for the poller's release path to consume instead.
+        """
+        assert self._expedite_sha is not None, "Call start() first"
+        result = await self._evalsha_with_fallback(
+            self._expedite_sha, EXPEDITE_POLL_LUA, 2,
+            SCHED_POLLS, sched_expedite_key(job),
+            str(now_ms), job, str(CONFIRM_DELAY_MS), str(EXPEDITE_FLAG_TTL_SECONDS),
+        )
+        return result.decode() if isinstance(result, (bytes, bytearray)) else str(result)
+
+    async def consume_expedite(self, job: str) -> bool:
+        """
+        Consume the expedite flag for ``job`` with a single GETDEL (D-43).
+
+        Returns True exactly once per flag; an absent flag returns False rather than
+        raising. Lives here rather than on a separate Redis handle because
+        ``poll_loop``'s signature only carries the scheduler.
+        """
+        value = await cast(Awaitable[Any], self.r.getdel(sched_expedite_key(job)))
+        return value is not None
