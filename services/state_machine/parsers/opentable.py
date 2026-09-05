@@ -45,7 +45,17 @@ def effective_coverage(request_params: Mapping[str, Any]) -> frozenset[tuple[str
     try:
         party = int(parties[0])
     except (TypeError, ValueError) as exc:
-        raise ParseError(f"request_params.party_sizes[0] is not an integer: {exc}") from exc
+        # The TYPE, never the value. `int()`'s ValueError names the offending literal
+        # ("invalid literal for int() with base 10: 'SECRET-abc123'") and `_handle_raw` logs
+        # this message verbatim as `poll_unparseable reason=...`, so interpolating `exc`
+        # echoed producer-controlled payload data into the log stream — the same defect as
+        # CR-02, one field narrower, and a direct breach of the contract in
+        # parsers/errors.py ("Messages name the defect only and never carry the payload
+        # body, so they are safe to log").
+        raise ParseError(
+            "request_params.party_sizes[0] is not an integer "
+            f"(got {type(parties[0]).__name__})"
+        ) from exc
     bad_dates = [d for d in dates if not isinstance(d, str)]
     if bad_dates:
         # str() never raises, so an int or a dict here would silently become a coverage entry

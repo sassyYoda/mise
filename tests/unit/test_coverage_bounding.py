@@ -203,3 +203,29 @@ async def test_a_poll_without_coverage_does_not_clear_an_unknown_mark() -> None:
     meta = await store.get_meta(RID)
     assert meta.unknown_since_ms == T0, "an unobservable poll cleared the UNKNOWN mark"
     assert meta.last_success_ms is None
+
+
+# -- WR-01 (iter 2): a ParseError message is logged verbatim, so it must carry no payload --
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["SECRET-abc123-token", "19:00|bar"],
+    ids=["token_shaped", "slot_shaped"],
+)
+def test_an_unusable_party_size_never_echoes_the_value_into_the_message(value) -> None:
+    """`_handle_raw` logs `reason=str(exc)`, so anything interpolated here reaches the log."""
+    with pytest.raises(ParseError) as excinfo:
+        effective_coverage({"rid": RID, "dates": [DATE], "party_sizes": [value]})
+
+    message = str(excinfo.value)
+    assert value not in message, f"the payload value leaked into a logged message: {message!r}"
+    assert "party_sizes[0]" in message and "str" in message, (
+        f"the message must still name the defect and the offending TYPE: {message!r}"
+    )
+
+
+def test_an_unusable_party_size_of_another_type_names_that_type() -> None:
+    with pytest.raises(ParseError) as excinfo:
+        effective_coverage({"rid": RID, "dates": [DATE], "party_sizes": [{"party": 2}]})
+    assert "dict" in str(excinfo.value)
