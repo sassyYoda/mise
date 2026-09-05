@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: State Machine & Event Pipeline
 status: executing
-stopped_at: Phase 01 verified PASS-PENDING-HUMAN — 6/10 reqs DONE, 4/10 awaiting human gates (Twilio, domain, GCP, Resy, DevTools spike, 24h PERF-02)
-last_updated: "2026-09-05T05:10:22.760Z"
+stopped_at: Completed 02-01-core-diff-engine-PLAN.md
+last_updated: "2026-09-05T05:22:39.603Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 2 execution started
 progress:
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 2 (State Machine & Event Pipeline) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 2
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-09-05 — Phase 2 execution started
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -57,6 +57,11 @@ Progress: [██████████] 100%
 | Phase 01 P03 | 349 | 4 tasks | 6 files |
 | Phase 01 P05 | 407 | 4 tasks | 16 files created + 5 modified |
 | Phase 01 P06 | 187 | 2 tasks | 3 files |
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 2 P01 | 13 | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -73,6 +78,10 @@ Recent decisions affecting current work:
 - 01-05 corrected a plan-text bug: REQUIRED_TOPICS in services/poller/main.py uses the 5 Named-Symbol topics (availability.raw, availability.events, polls.completed, notifications.queued, notifications.sent) rather than the plan-text's watchlist.commands/watchlist.events/notifications.delivered (which do not exist in scripts/create_topics.py).
 - 01-05 OpenTable DevTools spike deferred to human action: placeholder endpoint/headers/fixtures seeded in services/poller/sources/opentable/ with [ASSUMED]/TODO(spike) markers so adapter code + respx-mocked tests work today. Live capture on opentable.com required before Plan 06 PERF-02 gate to confirm >= 99% success rate under the real endpoint.
 - 01-06: PERF-02 tooling complete (check_poll_success.py with time_bucket SELECT + exit 0/1/2 gate, README legal + Kafka tradeoff + runbook, runbook procedure filled). 24h observation run (T3/T4) BLOCKED ON HUMAN ACTION; cannot declare PERF-02 pass or Phase 01 complete until DevTools spike + 24h run + FD evidence gathered.
+- [Phase ?]: 02-01: DiffEngine is a pure functional core — StateStore Protocol, no clock read, no entropy, no IO; a source-grep unit test enforces it permanently (D-49, research Pitfall 8).
+- [Phase ?]: 02-01: SlotState uses enum.StrEnum rather than (str, Enum) — ruff UP042 rejects the mixin form on py312; semantics are identical.
+- [Phase ?]: 02-01: OPENTABLE_SUCCESS_RESPONSE carries seatingTypes [bar, standard], so one timeslot yields TWO slots and the confirming poll emits TWO events; Expedite is de-duplicated to one per restaurant per poll (ZSET score is per job, not per slot).
+- [Phase ?]: 02-01: Requirements STATE-02/04/06 left Pending — this plan ships only the pure core; the SET NX EX claim, consumer shell and replay script land in 02-02/02-03/02-04.
 
 ### Pending Todos
 
@@ -100,8 +109,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-22T14:10:00.000Z
-Stopped at: Phase 01 autonomous execution complete + verified PASS-PENDING-HUMAN (6/10 reqs DONE, 4/10 human-gated)
-Resume file: .planning/phases/01-foundation-admin-pre-conditions-opentable-polling/VERIFICATION.md
+Last session: 2026-09-05T05:22:32.123Z
+Stopped at: Completed 02-01-core-diff-engine-PLAN.md
+Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z
