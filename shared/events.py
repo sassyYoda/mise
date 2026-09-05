@@ -4,6 +4,7 @@ Single source of truth for all Kafka message contracts (D-06).
 Named symbols: AvailabilityRaw, PollCompleted
 """
 from __future__ import annotations
+
 from typing import Any, Literal
 from uuid import UUID
 

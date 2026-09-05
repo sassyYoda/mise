@@ -3,10 +3,11 @@ Structured logging via structlog (D-12, D-13).
 Named symbol: configure_logging, get_logger
 """
 from __future__ import annotations
+
 import logging
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -70,4 +71,4 @@ def configure_logging(env: str | None = None) -> None:
 def get_logger(name: str) -> structlog.BoundLogger:
     """Return a structlog BoundLogger for the given name."""
     configure_logging()
-    return structlog.get_logger(name)
+    return cast(structlog.BoundLogger, structlog.get_logger(name))

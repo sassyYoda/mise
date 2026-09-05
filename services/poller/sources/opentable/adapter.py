@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from tenacity import (
@@ -89,7 +89,7 @@ class OpenTableAdapter(AvailabilitySource):
                 request=resp.request,
             )
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
     async def poll(
         self,

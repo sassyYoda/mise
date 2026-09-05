@@ -1,6 +1,7 @@
 """Unit test for shared.kafka producer config (D-02)."""
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 
 
 @pytest.mark.asyncio
@@ -25,6 +26,7 @@ async def test_make_producer_config():
 async def test_make_producer_defaults_to_env_var():
     """make_producer should read KAFKA_BOOTSTRAP_SERVERS from env when not given."""
     import os
+
     from shared.kafka import make_producer
     os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "kafka-env:9092"
     try:

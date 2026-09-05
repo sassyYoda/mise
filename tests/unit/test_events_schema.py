@@ -1,6 +1,8 @@
 """Unit tests for shared.events Pydantic models."""
-import pytest
 from uuid import uuid4
+
+import pytest
+
 from shared.events import AvailabilityRaw, PollCompleted
 
 

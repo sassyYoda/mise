@@ -1,4 +1,5 @@
-"""Integration: SC4 / Plan 02 BLOCKING — `make migrate` applies and creates hypertables with chunk_time_interval = 1 day.
+"""Integration: SC4 / Plan 02 BLOCKING — `make migrate` applies and creates hypertables
+with chunk_time_interval = 1 day.
 
 Plan 02 owns this test. It proves:
   1. All 7 Alembic migrations apply cleanly against a TimescaleDB 2.17.2-pg16 container.

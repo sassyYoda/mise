@@ -8,6 +8,7 @@ Usage: uv run python scripts/seed_restaurants.py
 Or:    make seed
 """
 from __future__ import annotations
+
 import asyncio
 import os
 import random
@@ -20,7 +21,8 @@ import yaml
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from shared.redis_keys import SCHED_POLLS, job as make_job
+from shared.redis_keys import SCHED_POLLS
+from shared.redis_keys import job as make_job
 
 YAML_PATH = Path("scripts/seed/restaurants.yml")
 

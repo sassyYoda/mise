@@ -1,9 +1,15 @@
+line-length = 120
+target-version = "py312"
+
 [lint]
 select = ["E", "F", "W", "I", "UP", "ASYNC"]
 ignore = []
 
 [lint.per-file-ignores]
-"tests/**" = ["S101"]
+# Tests and one-shot scripts may block on subprocess/pathlib; the async-only
+# rules (no time.sleep, no sync redis, no requests) still apply to services/ and shared/.
+"tests/**" = ["S101", "ASYNC221", "ASYNC240"]
+"scripts/**" = ["ASYNC240"]
 
 # Pitfall 16: Ban blocking patterns in async service code.
 # These are enforced here and documented in CONTRIBUTING.md.

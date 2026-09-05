@@ -100,7 +100,7 @@ async def test_end_to_end_emit_within_60s(
 
         try:
             await asyncio.wait_for(run(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Expected — the poller runs indefinitely; we just need it to
             # emit at least one availability.raw message.
             pass

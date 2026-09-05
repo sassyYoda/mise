@@ -1,5 +1,4 @@
 """Unit tests for shared.telemetry secret-redaction processor."""
-import pytest
 from shared.telemetry import _redact_secrets
 
 

@@ -5,6 +5,11 @@ Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
 # -- Scheduler ZSETs --
 SCHED_POLLS = "sched:polls"              # score = next_poll_epoch_ms
 SCHED_POLLS_INFLIGHT = "sched:polls:inflight"  # score = now_ms + visibility_ms
@@ -21,14 +26,13 @@ def job(source: str, restaurant_id: int) -> str:
     return f"{source}:{restaurant_id}"
 
 
-async def set_nx_ex(r: object, key: str, value: str, ttl_seconds: int) -> bool:
+async def set_nx_ex(r: Redis, key: str, value: str, ttl_seconds: int) -> bool:
     """
     Atomic SETNX+EX in a single Redis call (Pitfall 7).
     NEVER use two-command SETNX + EXPIRE.
     Returns True if key was set (did not exist), False if it already existed.
     """
-    # r is redis.asyncio.Redis — typed as object to avoid import at this layer
-    result = await r.set(key, value, nx=True, ex=ttl_seconds)  # type: ignore[union-attr]
+    result = await r.set(key, value, nx=True, ex=ttl_seconds)
     return result is True
 
 

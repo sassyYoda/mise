@@ -1,12 +1,14 @@
 """Unit tests for shared.redis_keys constants and helpers."""
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+
 from shared.redis_keys import (
-    SCHED_POLLS,
-    SCHED_POLLS_INFLIGHT,
-    POLL_VISIBILITY_TIMEOUT_MS,
     POLL_INTERVAL_SECONDS,
     POLL_JITTER_FRACTION,
+    POLL_VISIBILITY_TIMEOUT_MS,
+    SCHED_POLLS,
+    SCHED_POLLS_INFLIGHT,
     job,
     set_nx_ex,
 )
@@ -44,7 +46,7 @@ async def test_set_nx_ex_returns_false_when_key_exists():
 
 
 def test_lua_scripts_are_non_empty_strings():
-    from shared.redis_keys import CLAIM_POLL_LUA, RELEASE_POLL_LUA, REAP_INFLIGHT_LUA
+    from shared.redis_keys import CLAIM_POLL_LUA, REAP_INFLIGHT_LUA, RELEASE_POLL_LUA
     assert isinstance(CLAIM_POLL_LUA, str) and len(CLAIM_POLL_LUA) > 50
     assert isinstance(RELEASE_POLL_LUA, str) and len(RELEASE_POLL_LUA) > 30
     assert isinstance(REAP_INFLIGHT_LUA, str) and len(REAP_INFLIGHT_LUA) > 50
@@ -58,11 +60,6 @@ def test_lua_claim_uses_zrangebyscore():
 
 
 def test_constants_values():
-    from shared.redis_keys import (
-        POLL_VISIBILITY_TIMEOUT_MS,
-        POLL_INTERVAL_SECONDS,
-        POLL_JITTER_FRACTION,
-    )
     assert POLL_VISIBILITY_TIMEOUT_MS == 60_000
     assert POLL_INTERVAL_SECONDS == 90
     assert abs(POLL_JITTER_FRACTION - 0.15) < 0.001

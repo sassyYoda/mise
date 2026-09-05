@@ -4,6 +4,7 @@ Verify seed: assert >= 50 restaurants with all required fields in DB;
 assert >= 50 entries in sched:polls ZSET (SC3, make verify-seed target).
 """
 from __future__ import annotations
+
 import asyncio
 import os
 import sys

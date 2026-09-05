@@ -4,6 +4,7 @@ Named config: acks='all', enable_idempotence=True, compression_type='gzip', ling
 All producers created via this factory — no inline instantiation in services.
 """
 from __future__ import annotations
+
 import os
 
 from aiokafka import AIOKafkaProducer

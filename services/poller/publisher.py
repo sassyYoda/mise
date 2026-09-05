@@ -10,7 +10,7 @@ Named Symbols: ``availability.raw``, ``polls.completed``,
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -94,7 +94,7 @@ class Publisher:
         async with session_factory() as session:
             await session.execute(
                 insert(PollLog).values(
-                    time=datetime.now(timezone.utc),
+                    time=datetime.now(UTC),
                     restaurant_id=restaurant_id,
                     source=source,
                     status=status,

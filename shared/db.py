@@ -5,17 +5,32 @@ Named tables: users, restaurants, watchlist_entries, notification_log,
               availability_events, poll_log
 """
 from __future__ import annotations
+
 import os
-from datetime import date, time, datetime
+from datetime import date, datetime
+from datetime import time as dt_time
 from uuid import UUID
 
 from sqlalchemy import (
-    ARRAY, BigInteger, Boolean, Date, Float, Integer, LargeBinary, Text, Time,
-    TIMESTAMP, ForeignKey, UniqueConstraint, text as sa_text,
+    ARRAY,
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    Date,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Text,
+    Time,
+    UniqueConstraint,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import (
+    text as sa_text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
@@ -61,8 +76,8 @@ class WatchlistEntry(Base):
     party_size: Mapped[int] = mapped_column(Integer, nullable=False)
     date_from: Mapped[date] = mapped_column(Date, nullable=False)
     date_to: Mapped[date] = mapped_column(Date, nullable=False)
-    time_window_from: Mapped[time | None] = mapped_column(Time, nullable=True)
-    time_window_to: Mapped[time | None] = mapped_column(Time, nullable=True)
+    time_window_from: Mapped[dt_time | None] = mapped_column(Time, nullable=True)
+    time_window_to: Mapped[dt_time | None] = mapped_column(Time, nullable=True)
     days_of_week: Mapped[str | None] = mapped_column(Text, nullable=True)
     seat_type_filter: Mapped[str | None] = mapped_column(Text, nullable=True)
     channels: Mapped[str] = mapped_column(Text, server_default="email", nullable=False)
@@ -97,7 +112,7 @@ class AvailabilityEvent(Base):
     restaurant_id: Mapped[int] = mapped_column(BigInteger, nullable=False, primary_key=True)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    time_slot: Mapped[time | None] = mapped_column(Time, nullable=True)
+    time_slot: Mapped[dt_time | None] = mapped_column(Time, nullable=True)
     party_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seat_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     booking_token: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -121,11 +136,11 @@ class PollLog(Base):
     poll_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
 
 
-_engine = None
+_engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine():
+def get_engine() -> AsyncEngine:
     """Return the async SQLAlchemy engine. Creates it on first call."""
     global _engine
     if _engine is None:
