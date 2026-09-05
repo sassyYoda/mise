@@ -112,3 +112,44 @@ async def test_a_failed_poll_never_leaves_a_stale_close_count() -> None:
 
     assert engine.last_close_count == 0, "a stale close count survived a failed poll"
     assert engine.last_collision_count == 0
+
+
+# -- WR-02 (iteration 3): the identity recipe's NON-injectivity, pinned as an executable fact --
+#
+# `make_event_id`'s docstring used to assert a safety property it does not have: that an
+# ambiguity would need to straddle `slot_key` and `first_poll_id`, and that `first_poll_id`
+# being a UUID therefore blocked it. Both halves were false. These two tests are the
+# reproduction, kept executable so the constraint cannot drift back into comforting prose —
+# and so that the day the recipe IS escaped (WR-01 in .planning/deferred-items.md), they fail
+# loudly and have to be deleted deliberately rather than forgotten.
+
+
+def test_the_event_id_recipe_is_not_injective_across_adjacent_payload_fields() -> None:
+    """`date`, `party_size` and `slot_key` are adjacent, unescaped and all payload-derived."""
+    from shared.events import make_event_id
+
+    first = make_event_id("opentable", RID, "2026-05-01", 2, "19:00|bar", "pid")
+    second = make_event_id("opentable", RID, "2026-05-01:2", 19, "00|bar", "pid")
+
+    assert first == second, (
+        "this collision is the KNOWN CONSTRAINT recorded on make_event_id. If it no longer "
+        "holds, the recipe changed — every committed golden and every availability_events "
+        "row must be regenerated in the same commit (WR-01)."
+    )
+
+
+def test_slot_key_itself_collapses_two_distinct_identities() -> None:
+    """`slot_key` is a lossy join, so escaping the id recipe alone would not fix WR-01."""
+    from services.state_machine.models import Slot
+
+    embedded_in_time = Slot(
+        date=DATE, party_size=PARTY, time_slot="19:00|bar", seat_type=None, booking_token="a"
+    )
+    embedded_in_seat = Slot(
+        date=DATE, party_size=PARTY, time_slot="19:00", seat_type="bar|-", booking_token="b"
+    )
+
+    assert embedded_in_time.slot_key == embedded_in_seat.slot_key == "19:00|bar|-", (
+        "two distinct slots share one Redis hash field, one SlotRecord and one event_id "
+        "(WR-01, deferred: fixing it changes every event_id)"
+    )

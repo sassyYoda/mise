@@ -36,17 +36,30 @@ def make_event_id(
     genuinely new id while a redelivered confirmation reproduces the old one exactly.
     Both the recipe and the namespace are permanent; see NAMESPACE_MISE.
 
-    KNOWN CONSTRAINT (WR-04): the separator is not escaped and `slot_key` contains payload
-    data that can hold a `:` (it is `f"{time_slot}|{seat_type or '-'}"`, and `time_slot` is a
-    clock time), so two distinct component tuples could in principle hash to one id. The
-    matching claim key in `shared.redis_keys.event_idempotency_key` percent-escapes its
-    components for exactly this reason; this one deliberately does NOT, because the recipe is
-    permanent — every committed golden in `tests/fixtures/raw_streams/*.events.jsonl` and
-    every `availability_events` row already encodes it, so changing it would invalidate all
-    of them. The residual risk is bounded: the ambiguity needs `slot_key` and
-    `first_poll_id`, and `first_poll_id` is a UUID string, so no attacker-controlled value
-    can straddle that boundary. Any future recipe change must escape the components and
-    regenerate the goldens together.
+    KNOWN CONSTRAINT (WR-02, iteration 3) — THIS RECIPE IS NOT INJECTIVE, AND THE PREVIOUS
+    WORDING HERE WAS WRONG. It claimed the ambiguity had to straddle `slot_key` and
+    `first_poll_id` and was therefore blocked by the latter being a UUID. It does not, and it
+    is not. `date`, `party_size` and `slot_key` are three ADJACENT components, all three are
+    taken from the source response with nothing but an `isinstance` check
+    (`date_entry.get("date")`, `_slot_party_size`, `time_slot`/`seatingTypes`), and none of
+    them is escaped. A collision is therefore constructible from response data alone:
+
+        make_event_id("opentable", 42, "2026-05-01",   2,  "19:00|bar", pid)
+        make_event_id("opentable", 42, "2026-05-01:2", 19, "00|bar",    pid)
+        -> the same uuid5
+
+    `slot_key` is itself a lossy join (`f"{time_slot}|{seat_type or '-'}"`), so
+    `("19:00|bar", None)` and `("19:00", "bar|-")` also collapse onto one id — see WR-01 in
+    `.planning/deferred-items.md`, which records the reproduction and the escaping fix.
+    `tests/unit/test_slot_key_collisions.py` pins both collisions so this constraint is
+    executable rather than prose.
+
+    The recipe is frozen NOT because the risk is bounded but because the output is permanent:
+    every committed golden in `tests/fixtures/raw_streams/*.events.jsonl` and every
+    `availability_events` row already encodes it. Any change must percent-escape EVERY
+    component, regenerate the goldens, and carry a Redis-state cutover, all in one commit.
+    The matching claim key in `shared.redis_keys.event_idempotency_key` already escapes its
+    components; it could, because it is ephemeral (20-minute TTL) and appears in no golden.
     """
     return uuid5(NAMESPACE_MISE, f"{source}:{restaurant_id}:{date}:{party_size}:{slot_key}:{first_poll_id}")
 
