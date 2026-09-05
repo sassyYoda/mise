@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Mapping
 from typing import TYPE_CHECKING, cast
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -64,7 +65,7 @@ def event_idempotency_key(
     restaurant_id: int, date: str, party_size: int, slot_key: str, token: str
 ) -> str:
     """
-    Return the SET NX EX claim key for one emitted event (D-46, STATE-04).
+    Return the SET NX EX claim key for one emitted event (D-46 as amended, STATE-04).
 
     `slot_key` is MANDATORY and is what makes the claim unique per slot identity. D-36 puts
     `seat_type` inside slot identity while `booking_token` is only data, and OpenTable fans one
@@ -72,8 +73,25 @@ def event_idempotency_key(
     `(rid, date, party, token)` alone collapses two distinct slots onto one key and silently
     drops the second confirmed opening. The token stays in the key (it distinguishes a rotated
     token within one slot cycle) but it can no longer be the only discriminator.
+
+    Every component is percent-escaped, so the key is INJECTIVE (WR-04). `slot_key` is
+    `f"{time_slot}|{seat_type or '-'}"` and both halves, like `token`, come straight from the
+    payload — `parsers/opentable.py` only checks `isinstance(..., str)`. A plain join on `:`
+    is therefore ambiguous whenever a value contains the separator, which a time slot always
+    does: `slot_key="19:00|bar", token="a:b"` and `slot_key="19:00|bar:a", token="b"` both
+    rendered `event:42:D:2:19:00|bar:a:b`. That is the same class of silent identity collapse
+    the seat-type fix removed, arriving by a different route. `quote(..., safe="")` escapes
+    `:` (and `%` itself), so the components can be recovered unambiguously and two distinct
+    tuples can never render one key.
+
+    The claim key is ephemeral (20 min TTL) and appears in no golden, so re-shaping it is
+    free. `shared.events.make_event_id` has the identical concatenation and the identical
+    argument, but its output is a PERMANENT uuid5 recorded in every committed golden and in
+    the availability_events rows, so it is deliberately left alone; the constraint is
+    recorded there in a comment.
     """
-    return f"event:{restaurant_id}:{date}:{party_size}:{slot_key}:{token}"
+    parts = (str(restaurant_id), date, str(party_size), slot_key, token)
+    return "event:" + ":".join(quote(part, safe="") for part in parts)
 
 
 # -- Typed HASH helpers (D-42, research Pitfall 3) --

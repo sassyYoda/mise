@@ -35,6 +35,18 @@ def make_event_id(
     Keying on the *first* poll id (not the confirming one) means a re-opened slot gets a
     genuinely new id while a redelivered confirmation reproduces the old one exactly.
     Both the recipe and the namespace are permanent; see NAMESPACE_MISE.
+
+    KNOWN CONSTRAINT (WR-04): the separator is not escaped and `slot_key` contains payload
+    data that can hold a `:` (it is `f"{time_slot}|{seat_type or '-'}"`, and `time_slot` is a
+    clock time), so two distinct component tuples could in principle hash to one id. The
+    matching claim key in `shared.redis_keys.event_idempotency_key` percent-escapes its
+    components for exactly this reason; this one deliberately does NOT, because the recipe is
+    permanent — every committed golden in `tests/fixtures/raw_streams/*.events.jsonl` and
+    every `availability_events` row already encodes it, so changing it would invalidate all
+    of them. The residual risk is bounded: the ambiguity needs `slot_key` and
+    `first_poll_id`, and `first_poll_id` is a UUID string, so no attacker-controlled value
+    can straddle that boundary. Any future recipe change must escape the components and
+    regenerate the goldens together.
     """
     return uuid5(NAMESPACE_MISE, f"{source}:{restaurant_id}:{date}:{party_size}:{slot_key}:{first_poll_id}")
 

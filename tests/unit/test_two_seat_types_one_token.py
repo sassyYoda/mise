@@ -20,6 +20,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
+from urllib.parse import unquote
 
 import pytest
 
@@ -134,8 +135,15 @@ async def test_each_slot_takes_its_own_layer_1_claim(monkeypatch) -> None:
 
     claims = sorted(redis_client.keys)
     assert len(claims) == 2, f"expected one claim key per slot, got {claims}"
-    assert all("19:00|" in key for key in claims), claims
     assert claims[0] != claims[1]
+    # The slot key is in the claim, percent-escaped: the components are joined on `:` and a
+    # time slot contains one, so an unescaped join was not injective (WR-04). Decoding it
+    # back is a stronger assertion than the substring check this replaced.
+    assert all("19%3A00%7C" in key for key in claims), claims
+    assert {unquote(key.rsplit(":", 2)[-2]) for key in claims} == {
+        "19:00|bar",
+        "19:00|standard",
+    }
 
 
 @pytest.mark.asyncio

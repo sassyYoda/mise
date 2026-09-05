@@ -80,9 +80,10 @@ def test_avail_meta_key_format():
 
 
 def test_event_idempotency_key_format():
+    """Components are percent-escaped (WR-04), so `:` inside a value cannot split the key."""
     assert (
         event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "tok1")
-        == "event:42:2026-05-01:2:19:00|bar:tok1"
+        == "event:42:2026-05-01:2:19%3A00%7Cbar:tok1"
     )
 
 
@@ -116,6 +117,36 @@ def test_idempotency_keys_differing_only_in_time_slot_are_distinct():
     a = event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "shared-token")
     b = event_idempotency_key(42, "2026-05-01", 2, "20:00|bar", "shared-token")
     assert a != b
+
+
+def test_the_claim_key_is_injective_over_components_that_contain_the_separator():
+    """WR-04: an unescaped join collapsed two distinct slot identities onto one key.
+
+    `slot_key` is `f"{time_slot}|{seat_type or '-'}"` and both halves — like `token` — come
+    straight from the payload, which `parsers/opentable.py` only isinstance-checks. A time
+    slot ALWAYS contains a `:`, so this is the ordinary case, not an exotic one:
+    `("19:00|bar", "a:b")` and `("19:00|bar:a", "b")` used to render the same key, and the
+    second confirmed opening would have been claimed away by the first.
+    """
+    components = ["", "-", "a", "a:b", ":", "19:00|bar", "19:00|bar:a", "b", "%3A", "%"]
+    seen: dict[str, tuple] = {}
+    for slot_key in components:
+        for token in components:
+            for date in ("", "2026-05-01", "2026:05:01"):
+                identity = (slot_key, token, date)
+                key = event_idempotency_key(42, date, 2, slot_key, token)
+                clash = seen.setdefault(key, identity)
+                assert clash == identity, (
+                    f"{identity} and {clash} both render {key!r}: one confirmed opening "
+                    "would silently claim the other's key and be dropped"
+                )
+
+
+def test_the_claim_key_is_injective_across_the_numeric_components():
+    """A restaurant id or party size cannot be made to eat the next field either."""
+    assert event_idempotency_key(4, "2:2026-05-01", 2, "s", "t") != event_idempotency_key(
+        42, "2026-05-01", 2, "s", "t"
+    )
 
 
 def test_key_builders_are_total_and_touch_no_redis():

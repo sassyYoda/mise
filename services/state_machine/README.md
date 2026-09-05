@@ -140,7 +140,7 @@ here (D-42).
 |-----|------|-----|----------|
 | `avail:{rid}:{date}:{party}` | HASH | 90000 s (25 h) | field = `{time_slot}\|{seat_type or '-'}`, value = compact JSON slot record |
 | `avail:{rid}:meta` | HASH | 90000 s | `unknown_since_ms`, `last_success_ms` |
-| `event:{rid}:{date}:{party}:{slot_key}:{token}` | STRING | 1200 s | the Layer-1 emission claim, one key per slot identity |
+| `event:{rid}:{date}:{party}:{slot_key}:{token}` (each component percent-escaped) | STRING | 1200 s | the Layer-1 emission claim, one key per slot identity |
 | `sched:expedite:{source}:{rid}` | STRING | 120 s | set when the job is in flight; the poller consumes it with `GETDEL` |
 
 The claim key includes the **slot key**, not just the booking token. `seat_type` is part of
@@ -150,6 +150,16 @@ slot's `SET NX` would fail, its confirmed event would be skipped rather than re-
 opening would be lost. `scripts/replay_raw.py` uses no claim key at all, so a token-only key
 also made production and replay disagree on the same input — a STATE-06 violation. The
 regression guard is `tests/unit/test_two_seat_types_one_token.py`.
+
+Every component is **percent-escaped** before the join, so the key is injective. `slot_key` is
+`{time_slot}|{seat_type or '-'}` and both halves, like `token`, are payload data that the
+parser only isinstance-checks — and a time slot always contains a `:`, the separator itself.
+A plain join was therefore ambiguous in the ordinary case, not an exotic one: `slot_key
+= "19:00|bar", token = "a:b"` and `slot_key = "19:00|bar:a", token = "b"` both rendered
+`event:42:D:2:19:00|bar:a:b`, so one confirmed opening could claim the other's key and be
+dropped. `shared/events.py`'s `make_event_id` has the same concatenation and deliberately does
+NOT escape: its output is a permanent uuid5 already recorded in every golden and every
+`availability_events` row. The constraint is documented there.
 
 The TTL is **key-level and refreshed on every write**, deliberately. Per-field hash TTL
 (`HEXPIRE`) is a Redis 7.4 *server* feature; redis-py 7.4.0 has the client method, so using it
