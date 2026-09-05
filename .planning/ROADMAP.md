@@ -211,7 +211,45 @@ Plans:
   4. The homepage live SSE feed shows the latest 5 events (hydrated via REST on load, appended via SSE thereafter), rate-capped at 1 event/sec, and reconnects via `Last-Event-ID` after network drop.
   5. Lighthouse LCP is <= 2.5s (p75 on homepage) on mobile, all tap targets are >= 44x44px, and the `/manage/t/{token}` page lets a user pause, resume, delete, or edit any watch without authentication.
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 06-01-preconditions-pattern-kernel-PLAN.md — Wave 1 — Wave-0 precondition gate over the Phase 4/5 artifacts this phase edits, plus the pure Wilson/quartile statistics and `compute_pattern` proven on five deterministic corpora (PATTERN-01, PATTERN-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 06-02-cagg-repo-cached-service-PLAN.md — Wave 2 — migration for the `availability_events_hourly` continuous aggregate, the repo read layer, the 7x24 densifier with the server-side `sparse` flag, and the Redis cache-aside service (PATTERN-01, PATTERN-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 06-03-pattern-api-go-json-notifier-hook-PLAN.md — Wave 3 — `/heatmap` and `/pattern` on the Phase 5 restaurants router, `pattern_status`, the implemented `estimate_window_text` hook, `/go` JSON mode and the SSE `retry:` frame (PATTERN-02, PATTERN-03, FE-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 06-04-web-scaffold-service-worker-design-system-PLAN.md — Wave 4 — the `web/` Next.js 15 scaffold, Serwist service worker, never-throwing api client, UI-SPEC design tokens and the seven hand-rolled primitives (FE-01, FE-07)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 06-05-heatmap-pattern-card-restaurant-detail-PLAN.md — Wave 5 — the server-rendered SVG heatmap, the never-hedging pattern card, and `/restaurant/[slug]` (FE-04, PATTERN-02)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 06-06-home-search-live-feed-PLAN.md — Wave 6 — the pure feed reducer with its burst backstop, the live-feed and search islands, and the assembled home page with its labelled sample heatmap (FE-02)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 06-07-watch-setup-preview-push-optin-PLAN.md — Wave 7 — the two-step watch form, the backend-parity notification preview, session resume, the offline outbox, and the five-state push opt-in (FE-03, FE-01)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 06-08-alert-landing-manage-watches-PLAN.md — Wave 8 — `/go/[token]` with its origin allowlist, and `/manage/t/[token]` with optimistic mutations, the delete dialog and notification history (FE-05, FE-06)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 06-09-lighthouse-a11y-backstops-docs-PLAN.md — Wave 9 — the median-of-five Lighthouse budget gate, the service-worker artifact proof, the held-out accessibility and UI-SPEC backstop suites, and the deploy documentation and pending-human runbooks (FE-07, FE-01)
+
 **UI hint**: yes
 
 ### Phase 7: Deploy, Observability & Portfolio Polish
