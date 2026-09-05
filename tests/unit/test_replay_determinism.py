@@ -22,6 +22,7 @@ import pytest
 
 from scripts.replay_raw import (
     OutputPathError,
+    canonical_topic,
     main,
     read_envelopes,
     replay,
@@ -189,3 +190,70 @@ def test_default_stdout_mode_emits_the_golden_and_nothing_else() -> None:
     )
     assert result.returncode == 0, result.stderr.decode()
     assert result.stdout == HAPPY_GOLDEN.read_bytes()
+
+
+def test_the_help_text_documents_the_exclusive_upper_bound() -> None:
+    """
+    D-55 is a contract a human reads at 2 AM: --to-offset is EXCLUSIVE and defaults to
+    end_offsets. If that is not in --help, the flag is a trap.
+    """
+    result = subprocess.run(
+        [sys.executable, "scripts/replay_raw.py", "--help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    # argparse hard-wraps help text, so collapse whitespace before matching phrases.
+    helptext = " ".join(result.stdout.lower().split())
+    assert "exclusive" in helptext
+    assert "end offsets" in helptext
+    assert "offsets 2, 3 and 4" in helptext
+
+
+def test_to_offset_without_from_offset_is_a_usage_error() -> None:
+    """An exclusive bound with no range to bound is a mistake worth naming, not ignoring."""
+    with pytest.raises(SystemExit) as exc:
+        main(["--input", str(HAPPY_INPUT), "--to-offset", "5"])
+    assert exc.value.code == 2  # argparse's own usage-error code
+
+
+def test_a_source_topic_copy_still_routes_to_the_availability_raw_schema() -> None:
+    """
+    --topic lets an operator replay a mirror or per-environment copy of availability.raw.
+
+    Routing on an exact name match would make every such topic "unrouted" and yield a silent
+    zero-event replay — indistinguishable from a stream that legitimately confirmed nothing.
+    """
+    assert canonical_topic("availability.raw") == "availability.raw"
+    assert canonical_topic("availability.raw.replay-ab12cd34") == "availability.raw"
+    assert canonical_topic("staging.availability.raw") == "availability.raw"
+    assert canonical_topic("polls.completed") == "polls.completed"
+    assert canonical_topic("staging.polls.completed") == "polls.completed"
+
+
+def test_the_makefile_exposes_replay_and_state_machine() -> None:
+    """CONTEXT §Integration Points: both must be discoverable through `make help`."""
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    phony = next(ln for ln in makefile.splitlines() if ln.startswith(".PHONY"))
+    for target in ("replay", "state-machine"):
+        assert f"\n{target}:" in makefile, f"missing `{target}` target"
+        assert f" {target} " in f" {phony} ", f"`{target}` missing from .PHONY"
+        # The `## ` help comment is what `make help` greps for.
+        line = next(ln for ln in makefile.splitlines() if ln.startswith(f"{target}:"))
+        assert "## " in line, f"`{target}` would not appear in `make help`"
+
+
+def test_the_env_example_documents_the_confirmation_window_and_the_crash_hook() -> None:
+    """
+    MISE_CRASH_AFTER may only appear alongside a TEST ONLY banner (research T-02-04): an
+    operator who copies .env.example into a deployed environment must not silently arm a
+    hook whose entire job is to SIGKILL the service.
+    """
+    lines = (REPO_ROOT / ".env.example").read_text().splitlines()
+    assert "CONFIRM_DELAY_MS=8000" in lines
+
+    crash_index = lines.index("MISE_CRASH_AFTER=")
+    banner = "\n".join(lines[max(0, crash_index - 4) : crash_index])
+    assert "TEST ONLY" in banner
+    assert "must be unset" in banner

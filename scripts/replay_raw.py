@@ -23,7 +23,8 @@ Exit codes:
   2 — no messages found in the requested offset range
 
 Named symbols: replay, read_envelopes, write_lines, resolve_output_path, run_input_mode,
-               run_offset_mode, route_diagnostics_to_stderr, InputError, OutputPathError, main
+               fetch_offset_range, canonical_topic, records_to_envelopes, run_offset_mode,
+               route_diagnostics_to_stderr, InputError, OutputPathError, main
 """
 from __future__ import annotations
 
@@ -38,6 +39,8 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import UUID
 
+from aiokafka import AIOKafkaConsumer, TopicPartition
+from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 
 from services.state_machine.engine import DiffEngine
@@ -190,6 +193,83 @@ async def run_input_mode(
     return 0
 
 
+async def fetch_offset_range(
+    topic: str,
+    bootstrap: str,
+    from_offset: int,
+    to_offset: int | None,
+    partition: int = 0,
+) -> list[Any]:
+    """
+    Read a HALF-OPEN Kafka offset range `[from_offset, to_offset)` without joining a group.
+
+    A group-less consumer plus `assign` + `seek` is the whole safety argument (D-50, T-02-06): a
+    group-less consumer has no committed offsets, so this tool structurally cannot rewind or
+    advance the `state-machine` group. `subscribe()` is never called — it is the call that
+    joins a group, and `assign()` raises IllegalStateError if it ran first.
+
+    `to_offset` defaults to the topic's `end_offsets`, which Kafka defines as last offset + 1;
+    that is exactly why D-55 makes the flag EXCLUSIVE, so the default and an explicit bound
+    mean the same thing. `assign` and `seek` are synchronous; `beginning_offsets`,
+    `end_offsets` and `position` are coroutines (research §Pattern 5, verified transcript).
+    """
+    consumer = AIOKafkaConsumer(
+        bootstrap_servers=bootstrap,
+        group_id=None,
+        enable_auto_commit=False,
+    )
+    await consumer.start()
+    records: list[Any] = []
+    try:
+        tp = TopicPartition(topic, partition)
+        consumer.assign([tp])
+        end = (await consumer.end_offsets([tp]))[tp]
+        upper = end if to_offset is None else min(to_offset, end)
+        if from_offset >= upper:
+            return []
+
+        consumer.seek(tp, from_offset)
+        while (await consumer.position(tp)) < upper:
+            batches = await consumer.getmany(timeout_ms=2000, max_records=100)
+            if not batches:
+                # No more data. Breaking rather than looping keeps an unbounded replay from
+                # spinning forever on a topic that will never fill.
+                break
+            done = False
+            for batch in batches.values():
+                for record in batch:
+                    if record.offset >= upper:
+                        done = True
+                        break
+                    records.append(record)
+                if done:
+                    break
+            if done:
+                break
+    finally:
+        await consumer.stop()
+    return records
+
+
+def canonical_topic(topic: str) -> str:
+    """
+    Map a source topic name onto the message SCHEMA it carries.
+
+    `--topic` exists so an operator can replay a copy, a per-environment variant, or a
+    differently-named mirror of `availability.raw`. Routing on an exact string match would
+    make every such topic "unrouted", and the replay would silently produce zero events —
+    which looks identical to a stream that legitimately confirmed nothing. Anything that is
+    not recognisably a polls.completed topic carries availability.raw messages.
+    """
+    return COMPLETED_TOPIC if COMPLETED_TOPIC in topic else RAW_TOPIC
+
+
+def records_to_envelopes(topic: str, records: Iterable[Any]) -> list[Envelope]:
+    """Wrap Kafka records in the same tagged envelope the jsonl fixtures use."""
+    role = canonical_topic(topic)
+    return [{"topic": role, "value": json.loads(record.value.decode("utf-8"))} for record in records]
+
+
 async def run_offset_mode(
     topic: str,
     bootstrap: str,
@@ -198,9 +278,23 @@ async def run_offset_mode(
     output_path: Path | None,
     confirm_delay_ms: int = DEFAULT_CONFIRM_DELAY_MS,
 ) -> int:
-    """Bounded Kafka offset-range replay — implemented in task 3 of plan 02-04."""
-    print("ERROR: --from-offset is not yet implemented", file=sys.stderr)
-    return 1
+    """
+    Replay a bounded Kafka offset range through the same engine `--input` mode uses.
+
+    An empty range is distinct from an empty result: exit 2 says "there was nothing there to
+    replay", which is a different thing from "the replay produced no events".
+    """
+    records = await fetch_offset_range(topic, bootstrap, from_offset, to_offset)
+    if not records:
+        bound = "end_offsets" if to_offset is None else str(to_offset)
+        print(
+            f"ERROR: no messages in {topic}[{from_offset}, {bound}) — nothing to replay",
+            file=sys.stderr,
+        )
+        return 2
+    lines = await replay(records_to_envelopes(topic, records), confirm_delay_ms)
+    write_lines(lines, output_path)
+    return 0
 
 
 def route_diagnostics_to_stderr() -> None:
@@ -272,7 +366,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse argv, dispatch to one of the two modes, and map failures onto the exit codes."""
     route_diagnostics_to_stderr()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.input is not None and args.to_offset is not None:
+        parser.error("--to-offset is only meaningful with --from-offset")
+    if args.from_offset is not None and args.from_offset < 0:
+        parser.error("--from-offset must not be negative")
+    if args.to_offset is not None and args.from_offset is not None and args.to_offset < args.from_offset:
+        parser.error("--to-offset is the EXCLUSIVE upper bound and must not precede --from-offset")
 
     try:
         output_path = resolve_output_path(args.output) if args.output else None
@@ -286,7 +388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(
             run_offset_mode(args.topic, args.bootstrap, args.from_offset, args.to_offset, output_path)
         )
-    except (InputError, OSError, ValidationError) as exc:
+    except (InputError, OSError, ValidationError, KafkaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

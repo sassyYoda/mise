@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: up down migrate seed poll state-machine test test-integration lint fmt smoke verify-seed verify-perf02 help topics
+.PHONY: up down migrate seed poll state-machine replay test test-integration lint fmt smoke verify-seed verify-perf02 help topics
 
 up: ## Start all infrastructure containers (Kafka, Redis, Postgres+TimescaleDB, Kafka UI)
 	docker compose -f ops/docker-compose.yml up -d
@@ -22,6 +22,9 @@ poll: ## Run OpenTable poller on host
 
 state-machine: ## Run the state machine consumer on host
 	uv run python -m services.state_machine
+
+replay: ## Replay availability.raw through the state machine (ARGS="--input tests/fixtures/raw_streams/happy.jsonl")
+	uv run python scripts/replay_raw.py $(ARGS)
 
 test: ## Run unit tests
 	uv run pytest tests/unit -x -q
