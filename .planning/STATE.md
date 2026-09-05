@@ -5,14 +5,14 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Resy & Playwright Fleet
 status: executing
-stopped_at: Completed 03-01-resy-parser-event-kernel-PLAN.md
-last_updated: "2026-09-05T08:44:06.022Z"
+stopped_at: Completed 03-02-scheduling-kernel-metrics-redaction-PLAN.md
+last_updated: "2026-09-05T09:04:57.292Z"
 last_activity: 2026-09-05
-last_activity_desc: 03-01 complete — parse_resy registered, banned is a non-success status
+last_activity_desc: 03-02 complete — 80 rpm budget Lua, tier/backoff math, redaction, metrics
 progress:
   total_phases: 7
   completed_phases: 0
-  total_plans: 21
+  total_plans: 24
   completed_plans: 0
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 ## Current Position
 
 Phase: 3 (Resy & Playwright Fleet) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
-Last activity: 2026-09-05 — 03-01 complete (parse_resy registered, SC5 proven at the unit tier)
+Last activity: 2026-09-05 — 03-02 complete (80 rpm cap + 45 s floor enforceable atomically in Redis)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -67,6 +67,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 2 P03 | 25 | 3 tasks | 15 files (13 created, 2 modified) |
 | Phase 2 P04 | 11 | 3 tasks | 13 files |
 | Phase 3 P01 | 18 | 3 tasks | 14 (7 created, 8 modified) files |
+| Phase 3 P02 | 34 | 3 tasks | 11 files (8 created, 3 modified) |
 
 ## Accumulated Context
 
@@ -105,6 +106,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 03-01: parse_resy is two-tier — poll-level unusability raises ParseError (UNKNOWN, closes nothing), per-slot type defects continue; results.venues must be a LIST, because an unrecognised body treated as a zero-slot observation would close every covered slot on unverified evidence.
 - [Phase ?]: 03-01: both non-success consumers branch on status == 'success', not on membership in FAILED_POLL_STATUSES — an allowlist of failures is what created the B-7 bug and would re-create it one status at a time; a schema test keeps the frozenset and the Literal in lockstep (D-67a).
 - [Phase ?]: 03-01: SC5 proven at the unit tier — engine.py is byte-for-byte unchanged, PARSER_REGISTRY gained exactly one key, and a source scan matches quoted registry-key LITERALS (not prose, since engine.py's docstring already names OpenTable).
+- [Phase ?]: 03-02: The 80 rpm cap refuses BEFORE it increments, so a refusal consumes no budget and the job releases at now+5s with the minute intact (D-65)
+- [Phase ?]: 03-02: effective_interval_seconds is max(min(tier, baseline), floor): watches may only speed a source UP, and the per-source floor is applied last because the floor is the promise (D-57)
+- [Phase ?]: 03-02: The telemetry redactor splits by origin — env-var names case-sensitive, HTTP header names case-insensitive; RESY_PROXY_URL is masked not blanked, failing closed on anything unparseable (D-61a)
+- [Phase ?]: 03-02: shared/metrics.py is the single definition site for every Prometheus metric in the repo; Phases 4-7 append there and never define at first use (D-69)
 
 ### Pending Todos
 
@@ -134,8 +139,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-05T08:43:57.799Z
-Stopped at: Completed 03-01-resy-parser-event-kernel-PLAN.md
+Last session: 2026-09-05T09:04:57.285Z
+Stopped at: Completed 03-02-scheduling-kernel-metrics-redaction-PLAN.md
 Resume file: None
 
 **Planned Phase:** 01 (foundation-admin-pre-conditions-opentable-polling) — 6 plans — 2026-04-21T22:22:04.644Z

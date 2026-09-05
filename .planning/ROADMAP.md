@@ -89,13 +89,13 @@ Plans:
   4. The global rate limiter caps Resy traffic at <= 80 req/min across all contexts and enforces >= 45s per-restaurant per-context interval — verified by a sustained 30-minute production trace in Grafana.
   5. Resy `availability.raw` events flow into the same Kafka topic as OpenTable and are diff'd by the existing State Machine without source-specific branching in the diff logic.
 
-**Plans**: 1/7 plans executed
+**Plans**: 2/7 plans executed
 
 Plans:
 **Wave 1**
 
 - [x] 03-01-resy-parser-event-kernel-PLAN.md — register `parse_resy` in the Phase-2 parser registry and make `banned` a first-class non-success poll status, proving SC5 at the unit tier (wave 1)
-- [ ] 03-02-scheduling-kernel-metrics-redaction-PLAN.md — tier/backoff/rate keys, the atomic 80 rpm budget Lua, the 45 s floor, secret redaction and the single metric definition site (wave 1)
+- [x] 03-02-scheduling-kernel-metrics-redaction-PLAN.md — tier/backoff/rate keys, the atomic 80 rpm budget Lua, the 45 s floor, secret redaction and the single metric definition site (wave 1)
 - [ ] 03-03-resy-config-schema-seed-PLAN.md — migration 0009 `UNIQUE(slug, source)`, the seed YAML field split, the two-row seed gated on `RESY_ENABLED`, the human-gated venue-id resolver, and lazily-read Resy config (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -214,7 +214,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 |-------|----------------|--------|-----------|
 | 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
 | 2. State Machine & Event Pipeline | 4/4 | Complete    | 2026-09-05 |
-| 3. Resy & Playwright Fleet | 1/7 | In progress | - |
+| 3. Resy & Playwright Fleet | 2/7 | In progress | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |
 | 6. Pattern Intelligence & Frontend PWA | 0/TBD | Not started | - |
