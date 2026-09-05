@@ -265,7 +265,41 @@ Plans:
   4. Terraform `apply` from a clean state provisions all GCP infrastructure (Cloud Run services, Cloud Run Worker Pools for polling/state/dispatcher/notifier, VPC, Memorystore, Artifact Registry, Secret Manager, GCE VMs for Kafka KRaft + TimescaleDB) with zero manual console clicks.
   5. The README includes an architecture diagram, the public Grafana link, the live-demo link, an explicit "Legal & Ethical Scraping" section citing the NY Restaurant Reservation Anti-Piracy Act (Feb 2025) and our 80 req/min cap / no-booking-automation / public-data-only posture, an honest "Why Kafka for 400 events/day?" tradeoff section, and the `scripts/replay_raw.py` walkthrough.
 
-**Plans**: TBD
+**Plans**: 8 plans
+
+> **Scope note (D-119):** GCP provisioning, `terraform apply`, the domain, the Grafana Cloud public
+> link, Better Uptime and the Sentry DSN are human-gated. Success Criteria 1, 2 and 4 are therefore
+> delivered as: a locally-served anonymous Grafana dashboard with the five panels plus a pending-human
+> hosted link; PERF-04 measurement tooling with no hosted monitor behind it; and a `terraform validate`-clean
+> skeleton that is explicitly never applied. Every gate is listed in `docs/HUMAN-ACTIONS.md`.
+
+Plans:
+**Wave 1**
+
+- [ ] 07-01-preconditions-service-images-PLAN.md — Wave 1 — Phase 4-6 precondition gate, `.dockerignore`, the four Python service images, `make images` (DEPLOY-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 07-02-web-image-compose-profiles-PLAN.md — Wave 2 — the Next standalone image, `/healthz`, the compose `prod`/`smoke` profiles, `apache/kafka:3.8.1` migration (DEPLOY-01)
+- [ ] 07-03-metrics-exposition-sentry-PLAN.md — Wave 2 — the seven-metric registry, `start_metrics_server`, `shared/observability.py`, the structlog-to-Sentry bridge (DEPLOY-05, DEPLOY-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 07-04-prometheus-grafana-dashboard-PLAN.md — Wave 3 — the `monitoring` profile, seven scrape jobs, exporters, recording rules, the five-panel anonymous dashboard and its drift guard (DEPLOY-05)
+- [ ] 07-05-terraform-deploy-docs-PLAN.md — Wave 3 — the eight-module Terraform skeleton that validates offline, `docs/deploy/gcp.md`, `docs/runbooks/uptime.md`, `docs/HUMAN-ACTIONS.md` (DEPLOY-02, DEPLOY-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 07-06-health-gates-uptime-PLAN.md — Wave 4 — `post_deploy_check.py` (lag + poll gates, no silent zero) and `uptime_report.py` (PERF-04 measurement) (DEPLOY-04, PERF-04)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 07-07-ci-cd-e2e-smoke-PLAN.md — Wave 5 — `ci.yml` (six jobs, ban greps preserved, pipefail everywhere), `cd.yml` (GHCR SHA tags, gated promotion), the Playwright smoke suite (DEPLOY-03, DEPLOY-04)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 07-08-portfolio-readme-status-PLAN.md — Wave 6 — architecture diagram, `status_report.py` + `docs/status.json`, the regenerated README with interview talking points and the honesty guard (DEPLOY-07)
+
 **UI hint**: no
 
 ## Progress
@@ -282,4 +316,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |
 | 6. Pattern Intelligence & Frontend PWA | 0/TBD | Not started | - |
-| 7. Deploy, Observability & Portfolio Polish | 0/TBD | Not started | - |
+| 7. Deploy, Observability & Portfolio Polish | 0/8 | Planned | - |
