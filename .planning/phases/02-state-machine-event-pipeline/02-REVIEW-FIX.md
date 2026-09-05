@@ -1,408 +1,362 @@
 ---
 phase: 02-state-machine-event-pipeline
-fixed_at: 2026-09-05T09:05:00Z
+fixed_at: 2026-09-05T08:05:00Z
 review_path: .planning/phases/02-state-machine-event-pipeline/02-REVIEW.md
-iteration: 1
-findings_in_scope: 25
-fixed: 25
+iteration: 2
+findings_in_scope: 17
+fixed: 17
 skipped: 0
 status: all_fixed
 ---
 
-# Phase 2: Code Review Fix Report
+# Phase 2: Code Review Fix Report (iteration 2)
 
-**Fixed at:** 2026-09-05T09:05:00Z
+**Fixed at:** 2026-09-05T08:05:00Z
 **Source review:** `.planning/phases/02-state-machine-event-pipeline/02-REVIEW.md`
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
 
 | Severity | In scope | Fixed | Deferred |
 |----------|----------|-------|----------|
-| Critical | 3 | 3 | 0 |
-| Warning | 15 | 15 | 0 |
-| Info | 7 | 7 | 0 |
-| **Total** | **25** | **25** | **0** |
+| Critical (BLOCKER) | 2 | 2 | 0 |
+| Warning | 9 | 9 | 0 |
+| Info | 6 | 6 | 0 |
+| **Total** | **17** | **17** | **0** |
 
-Every finding was fixed. One purely documentary follow-up is deferred with a reason at the
-bottom (amending the D-46 decision text in `02-CONTEXT.md`).
+Every finding was fixed. Two infos (IN-01, IN-06) were folded into the criticals/warnings they
+belong to, as the review itself suggested; both are committed and described below. One purely
+documentary follow-up is deferred with a reason at the bottom.
 
 **Gates, all green after the last commit:**
 
 | Gate | Result |
 |------|--------|
 | `uv run ruff check .` | All checks passed |
-| `uv run mypy shared/ services/ scripts/` | Success: no issues found in 40 source files |
-| `uv run pytest tests/unit -q` | **228 passed** (was 156) |
-| `uv run pytest tests/integration -q -p no:cacheprovider` | **62 passed** (was 52) |
+| `uv run mypy shared/ services/ scripts/` | Success: no issues found in 41 source files |
+| `uv run pytest tests/unit -q` | **254 passed** (was 228) |
+| `uv run pytest tests/integration -q -p no:cacheprovider` | **62 passed** (unchanged count, two tests materially strengthened) |
+
+Gates were run in the **main checkout** (`workflow.use_worktrees` is `false` in
+`.planning/config.json`, so no worktree was created and every edit, commit and gate ran on
+`main` directly). The numbers above are reproducible from the tree as it stands.
 
 The replay goldens in `tests/fixtures/raw_streams/*.events.jsonl` are **byte-for-byte
-unchanged** — see "Goldens" below.
+unchanged**: `git diff 53de387..HEAD -- tests/fixtures/` is empty.
 
 ---
 
 ## Fixed Issues
 
-### CR-01: Two seating types share one booking token, so one confirmed event is silently dropped
-
-**Files modified:** `shared/redis_keys.py`, `services/state_machine/consumer.py`,
-`services/state_machine/README.md`, `tests/unit/test_emission_idempotency.py`,
-`tests/unit/test_redis_keys_phase2.py`, `tests/unit/test_two_seat_types_one_token.py` (new)
-**Commit:** `54372b1`
-
-The Layer-1 claim key became `event:{rid}:{date}:{party}:{slot_key}:{token}` — the
-human-readable variant the review offered, keeping `booking_token` in the key as data while
-`slot_key` carries the identity `seat_type` contributes under D-36. Still one atomic
-`SET … NX EX 1200`; `EVENT_IDEMPOTENCY_TTL_SECONDS` is untouched.
-
-`tests/unit/test_two_seat_types_one_token.py` drives the real
-`StateMachineConsumer._handle_raw` over the **unmodified** `OPENTABLE_SUCCESS_RESPONSE`
-(`seatingTypes: ["bar", "standard"]`, one shared token) across two polls 9 s apart and asserts:
-two `send_and_wait` calls with two distinct `event_id`s and one shared `booking_token`, two
-`insert_event` calls, two distinct claim keys, and that `scripts/replay_raw.py` produces the
-same two events **byte for byte** from the same input. Mutation-checked: reverting the key to
-the token-only form fails three of its four tests.
-
-`services/state_machine/README.md` documents the new key shape in both the emit-ordering
-diagram and the Redis-keys table, with the reason.
-
-### CR-02: `_flush()` persists the whole message, so later slots are AVAILABLE before their Kafka send
-
-**Files modified:** `services/state_machine/store.py`, `services/state_machine/consumer.py`,
-`services/state_machine/README.md`, `tests/unit/test_emit_flush_ordering.py` (new)
-**Commit:** `446c975`
-
-`BufferedStateStore.flush_slot()` makes exactly one slot durable; `_apply_emit` calls it
-instead of the message-wide `_flush()`. The tail flush in `_handle_raw` still runs, for the
-buffered writes no `Emit` covers (drops, closures, meta).
-
-`tests/unit/test_emit_flush_ordering.py` snapshots the durable store at the moment of each
-`send_and_wait` and asserts a later slot is still `PENDING` there; a second test kills the
-producer on the **second** slot's send, asserts that slot survives the crash as `PENDING`, and
-asserts a clean restart over the same durable state re-emits exactly it. Mutation-checked:
-restoring the message-wide flush fails both.
-
-**README crash table updated to match what the code guarantees.** The table now says
-explicitly that it is *per slot*, and a new note explains why step 3 is scoped to one slot and
-what a message-wide flush would have made false (rows 2 and 3, for every emit after the first).
-
-### CR-03: Migration 0008 unconditionally deletes every pre-existing `availability_events` row
-
-**Files modified:** `migrations/versions/0008_add_event_id_to_availability_events.py`,
-`tests/integration/test_migration_0008.py`
-**Commit:** `f77921c`
-
-The `DELETE` is gone. `upgrade()` now runs `SELECT count(*) FROM availability_events` **before**
-adding the column and raises a `RuntimeError` naming the row count and the two ways out
-(archive + truncate deliberately, or backfill `event_id` yourself). Backfilling automatically is
-not possible: `event_id` is uuid5 over `(source, rid, date, party, slot_key, first_poll_id)`
-(D-45) and a pre-0008 row records neither `slot_key` nor `first_poll_id`.
-
-`downgrade()` is unchanged and correct; its docstring now records that dropping `event_id` is
-lossy, so a later upgrade will refuse until the rows are dealt with.
-
-A new integration test downgrades, inserts a pre-0008 row, asserts `alembic upgrade head`
-**fails** with the explicit message, asserts the row is **still there** afterwards, and restores
-the schema.
-
-### WR-01: The offset is committed after *any* handler exception, not just poison messages
+### CR-01: WR-01 is not fixed — a transiently failed message is still skipped permanently
 
 **Files modified:** `services/state_machine/consumer.py`, `services/state_machine/README.md`,
-`tests/unit/test_offset_commit_policy.py` (new)
-**Commit:** `de8c498`
+`tests/unit/test_offset_commit_policy.py`
+**Commit:** `8660a70`
 
-`handle_message` splits `except (ValidationError, ParseError)` (poison — log, discard, commit)
-from `except Exception` (transient — log, discard, **return without committing**). README's
-poison-message paragraph now describes both cases.
+The review was right and the diagnosis was exact. Not committing does not hold the offset,
+because the consumer's *position* has already advanced; the next message's
+`commit({tp: offset + 1})` sets the group watermark strictly past the failed offset.
 
-### WR-02: `_commit` catches only `CommitFailedError`, so a rebalance can kill the service
+`handle_message`'s transient arm now calls `_retry_later(msg)`, which `seek`s the partition
+back to the failed offset and `pause`s it for a bounded backoff, resumed by a
+`loop.call_later` timer. Both halves are load-bearing: the `seek` is what makes the failed
+message the next one delivered, and the pause is what stops a dead Redis turning redelivery
+into a hot loop. The pause is scoped to the affected partition, so any other assigned
+partition keeps flowing. `run()` cancels any outstanding resume timers in a `finally`, so a
+SIGTERM (see WR-02) never leaves a timer holding a consumer that is about to stop. A rebalance
+between the failure and the rewind raises `IllegalStateError` from both `seek` and `pause`;
+that is caught and logged, and is benign — the uncommitted offset is redelivered to the new
+owner, which is the same outcome by a different route.
 
-**Files modified:** `services/state_machine/consumer.py`, `tests/unit/test_offset_commit_policy.py`
-**Commit:** `d7eafc7`
+**The backoff is not `asyncio.sleep`.** `tests/unit/test_no_inline_sleep.py` bans an inline
+sleep anywhere in `services/state_machine/`, and that gate was **not** touched, relaxed or
+allowlisted. `consumer.pause()` + `resume()` is the primitive Kafka provides for exactly this
+backpressure, and it parks the loop inside `getone()` rather than spinning.
 
-Catches `KafkaError`, which covers `CommitFailedError`, `IllegalStateError` and broker errors.
-The exception hierarchy the fix depends on was verified at runtime and is pinned by a test.
+The regression test is the one the review asked for: `_FakeConsumer` models a position, a
+commit log and the three cursor operations, `run()` is driven over three messages with the
+middle one's Redis claim failing once, and the test asserts the committed sequence is
+contiguous and that offset 1 is re-delivered. **Mutation-checked:** with the `seek`/`pause`
+removed it produces `commits == [1, 3]` and `seeks == []` — byte-for-byte the reviewer's
+reproduction.
 
-### WR-03: A crash between the state flush and `insert_event` loses the analytics row forever
+`README.md` and the `handle_message` docstring now state the real guarantee, including *why*
+skipping the commit alone was never sufficient.
 
-**Files modified:** `services/state_machine/consumer.py`, `services/state_machine/README.md`,
-`tests/unit/test_emit_flush_ordering.py`
-**Commit:** `c8e183b`
+### CR-02: The `message_poison` log leaks raw payload content, including booking tokens
 
-`insert_event` moved **before** the per-slot flush; it is idempotent via
-`ON CONFLICT (event_id, "time") DO NOTHING`, so a duplicate attempt is free. README's diagram
-swaps steps 3 and 4. This composes with CR-02 rather than conflicting with it: the guarantee
-CR-02 restores is that a slot's record is not durable before *its own* send, which per-slot
-flushing gives regardless of where the INSERT sits.
+**Files modified:** `services/state_machine/consumer.py`,
+`tests/unit/test_logs_never_carry_payload.py` (new)
+**Commit:** `e992c10`
 
-### WR-04: `main.run()` leaks the Redis client, scheduler and producer when startup fails partway
+`_failure_shape(exc)` returns `["{field.path}:{error_type}", …]` for a `ValidationError` and a
+dotted type name (`builtins.ConnectionError`) for anything else. Both `message_poison` and
+`message_handling_failed` use it, per the review's instruction to treat the transient arm the
+same way — a redis-py or asyncpg message can carry a DSN.
 
-**Files modified:** `services/state_machine/main.py`, `tests/unit/test_state_machine_startup.py` (new)
-**Commit:** `6cfad2d`
+`tests/unit/test_logs_never_carry_payload.py` drives the real `handle_message` and captures
+real structlog events via `structlog.testing.capture_logs()`. It asserts:
 
-`AsyncExitStack`, with each resource registered the moment it exists. LIFO unwinding is
-consumer → producer → Redis, matching the previous `finally`. Tests drive both partial-startup
-failures the review named.
+* the sentinel token is absent from the whole captured event stream, on both the poison and
+  the transient path;
+* the poison log **still** names the failing field and error type (`["raw_response:dict_type"]`)
+  — redaction must not become silence;
+* and, first in the file, that the sentinel really is present in `str(exc)`, so the leak tests
+  cannot pass vacuously if pydantic ever stops embedding `input_value`.
 
-### WR-05: The SQLAlchemy async engine is never disposed
+**Mutation-checked:** three of its four tests fail against `error=str(exc)`.
 
-**Files modified:** `shared/db.py`, `services/state_machine/main.py`,
-`tests/unit/test_state_machine_startup.py`
-**Commit:** `5fb0453`
+**IN-01 folded in here.** `ParseError` stays in the poison tuple, with a comment recording why:
+it is unreachable today (`parse_raw` is the only source and `_handle_raw` already catches it),
+but since CR-01 the alternative branch *rewinds*, so a `ParseError` that ever did reach the
+transient arm would be retried forever against a payload that can never decode. A dead branch
+is now strictly safer than the live one.
 
-`shared.db.dispose_engine()` closes the pool and drops both singletons; it is a no-op with no
-engine and safe to call twice. Registered on the exit stack *before* anything is acquired, so
-LIFO disposes it last, against a live loop.
+### WR-01: WR-08's `ParseError` message echoes producer-controlled payload data
 
-### WR-06: `CONFIRM_DELAY_MS` is documented as an environment variable but no code reads it
+**Files modified:** `services/state_machine/parsers/opentable.py`,
+`tests/unit/test_coverage_bounding.py`
+**Commit:** `f9be1c6`
 
-**Files modified:** `.env.example`, `services/state_machine/README.md`,
-`tests/unit/test_confirm_delay_is_not_configurable.py` (new), `tests/unit/test_replay_determinism.py`
-**Commits:** `8b7679b`, `76aa3b1`
+`int()`'s `ValueError` names the literal it could not parse, and `_handle_raw` logs the
+`ParseError` verbatim as `poll_unparseable reason=…`. The message now names the defect and the
+`type(...)__name__` only, restoring `parsers/errors.py`'s stated contract. Three new tests
+assert the value never appears in the message while the field path and the offending type
+still do.
 
-Took the *delete the documentation* branch rather than the *add the env read* branch: the
-replay goldens are only goldens if the confirmation window cannot be changed from the shell
-running the replay. `.env.example` replaces the assignment with a note; the README row says
-plainly that it is a compile-time constant.
+### WR-02: Nothing handles SIGTERM, so the AsyncExitStack and `dispose_engine` never run
 
-`76aa3b1` corrects an existing test that pinned the literal line `CONFIRM_DELAY_MS=8000` — i.e.
-it asserted the defect. It now asserts the window is still *explained* to an operator but never
-as an assignment; the `MISE_CRASH_AFTER` "TEST ONLY" banner check is untouched. (`8b7679b` left
-that test red for one commit; `76aa3b1` is the immediate follow-up.)
+**Files modified:** `shared/shutdown.py` (new), `services/state_machine/main.py`,
+`services/poller/main.py`, `tests/unit/test_graceful_shutdown.py` (new)
+**Commit:** `534006d`
 
-### WR-07: Two independent confirm-delay constants — replay and production can silently diverge
+`shared.shutdown.run_until_signal(main)` installs `SIGTERM`/`SIGINT` handlers via
+`loop.add_signal_handler`, and on a signal **cancels** the service coroutine so the caller's
+`AsyncExitStack` / `finally` unwinds normally. It re-raises a genuine crash unchanged, cancels
+its own waiter, removes its handlers, and cancels the inner task when the *caller* is
+cancelled — which is the shape the e2e integration test produces. `ensure_future` rather than
+`create_task` because the poller hands in an `asyncio.gather(...)`.
 
-**Files modified:** `services/state_machine/models.py`, `scripts/replay_raw.py`,
-`tests/unit/test_confirm_delay_is_not_configurable.py`, `tests/unit/test_replay_determinism.py`
-**Commit:** `5377f6a`
+Installed in **both** entry points, as the review asked. SIGKILL remains uncatchable, which is
+exactly why the chaos hook uses it, and the chaos test's `returncode == -SIGKILL` assertion is
+unaffected.
 
-`DEFAULT_CONFIRM_DELAY_MS` deleted; `replay_raw.py` imports `shared.redis_keys.CONFIRM_DELAY_MS`.
+Six tests cover: normal return, a crash propagating, a **real** `os.kill(SIGTERM)` reaching the
+service as cancellation so its `finally` runs, handlers being removed again, an outer cancel
+leaving no orphan, and a static guard that both entry points still call it.
 
-That tripped the existing replay import gate, which banned any import line *containing the
-substring* `redis`. The gate was **sharpened, not relaxed**: it now resolves imported modules
-from the AST and bans the `redis`/`sqlalchemy`/`asyncpg`/`psycopg` client libraries by root
-module (`shared.redis_keys` is a pure constants module that imports the client only under
-`TYPE_CHECKING`), and additionally bans constructing a client by any other route
-(`from_url`, `create_async_engine`, `AIOKafkaProducer`, `get_engine`). Mutation-checked against
-five separate violations, all of which it catches.
+### WR-03: WR-10 left four dead non-atomic Redis helpers exported
 
-### WR-08: `effective_coverage` performs unguarded `int()` / `str()` conversions on untrusted payload data
+**Files modified:** `shared/redis_keys.py`, `tests/unit/test_redis_keys_phase2.py`
+**Commit:** `7e58ed6`
 
-**Files modified:** `services/state_machine/parsers/opentable.py`, `tests/unit/test_coverage_bounding.py`
-**Commit:** `c258219`
+`hset_slot`, `hdel_slot`, `hset_meta` and `expire_key` are deleted, along with their entries in
+the module's `Named symbols` docstring; a comment records what was removed and why, since
+`test_no_setnx_expire_pairs.py` only greps for `.setnx(` and would not catch a reintroduction.
 
-`int(parties[0])` is guarded and re-raised as `ParseError`. Non-string dates are refused for the
-mirror-image reason: `str()` never raises, so an int or a dict date silently became a coverage
-entry matching no stored slot. A numeric string party size is still accepted.
+**IN-06 folded in.** `test_hash_helpers_are_exported_so_store_needs_no_casts` is split into two
+tests with corrected rationale: one asserts the *surviving* surface (`hgetall_slots` plus the
+three `_with_ttl` transactions, which is what actually satisfies D-42), the other asserts the
+four originals stay gone with a message naming the shape they represent.
 
-### WR-09: A poll with empty/unreadable `request_params` reports success while observing nothing
+### WR-04: The claim key concatenates untrusted fields with an unescaped `:`
 
-**Files modified:** `services/state_machine/parsers/opentable.py`, `tests/unit/test_coverage_bounding.py`
-**Commit:** `6196b69`
+**Files modified:** `shared/redis_keys.py`, `shared/events.py`,
+`services/state_machine/README.md`, `tests/unit/test_redis_keys_phase2.py`,
+`tests/unit/test_two_seat_types_one_token.py`
+**Commit:** `c4ababb`
 
-Took the stronger branch: `parse_opentable` raises `ParseError` on empty coverage, routing to
-the D-39 UNKNOWN path (nothing removed, nothing closed, nothing emitted, UNKNOWN mark not
-cleared). `effective_coverage`'s documented "empty set for an empty list" contract is unchanged,
-so the existing coverage-bounding tests are untouched. The now-unreachable `fallback_party is
-None` branch is gone. No fixture in `tests/fixtures/raw_streams/` has empty `request_params`, so
-no golden is affected.
+`event_idempotency_key` now percent-escapes every component (`quote(part, safe="")`), so the
+key is injective: `quote` escapes `:` and `%` itself, no component's encoding can contain the
+separator, and the join is unambiguous. The key is ephemeral (20 min TTL) and appears in no
+golden, so reshaping it is free — the goldens are confirmed unchanged.
 
-### WR-10: `RedisStateStore` mutations are two non-atomic round trips (HSET then EXPIRE)
+Two new tests: an injectivity sweep over 300 component tuples drawn from values that contain
+the separator (`"a:b"`, `":"`, `"19:00|bar:a"`, `"%"`, `""`), and a numeric-component case. The
+existing format test now pins the escaped form.
 
-**Files modified:** `shared/redis_keys.py`, `services/state_machine/store.py`,
-`tests/unit/test_redis_state_store_atomicity.py` (new)
-**Commit:** `ba8a0b2`
+`test_two_seat_types_one_token.py`'s claim assertion changed from a substring check on
+`"19:00|"` to *decoding* the slot component back and asserting the exact set
+`{"19:00|bar", "19:00|standard"}` — strictly stronger than what it replaced, and necessary
+because the old assertion pinned the unescaped format.
 
-`hset_slot_with_ttl` / `hdel_slot_with_ttl` / `hset_meta_with_ttl`, each a single MULTI/EXEC,
-with the redis-py casts staying in `shared/redis_keys.py` per D-42. The new guard is
-behavioural rather than textual: it drives the real store against a recording client and fails
-if any mutating command runs outside the transaction or if the `EXPIRE` is not in it. Verified
-against the real Redis 7.2 container (`test_redis_state_store.py`, 7 passed).
+`shared.events.make_event_id` is deliberately **not** changed: its uuid5 output is permanent
+and already recorded in every committed golden and every `availability_events` row. The
+constraint, and the argument for why the residual risk is bounded (the ambiguity would have to
+straddle `slot_key` / `first_poll_id`, and `first_poll_id` is a UUID string), is recorded in a
+comment there — which is the minimum the review asked for.
 
-### WR-11: Replay silently reads only partition 0
-
-**Files modified:** `scripts/replay_raw.py`, `tests/integration/test_replay_offset_range.py`,
-`services/state_machine/README.md`
-**Commit:** `33c7e79`
-
-Added `--partition`. A single-partition topic still needs no flag; a multi-partition topic with
-no `--partition` is refused with an error naming the partitions, as are a non-existent partition
-and a non-existent topic (a typo'd `--topic` used to look exactly like a stream that confirmed
-nothing).
-
-Implementation note: partitions are read with `AIOKafkaAdminClient`.
-`AIOKafkaConsumer.partitions_for_topic` reads `_client.cluster`, which stays empty because this
-consumer deliberately never subscribes, and `topics()` builds and discards a throwaway
-`ClusterMetadata` — verified by reading the installed aiokafka source. The admin client is
-metadata-only, so replay stays read-only by construction.
-
-### WR-12: Malformed or tombstoned Kafka records crash the replay tool with a traceback
-
-**Files modified:** `scripts/replay_raw.py`, `tests/unit/test_replay_determinism.py`
-**Commit:** `c7f5fc7`
-
-`records_to_envelopes` raises `InputError` naming topic and offset for a tombstone, a JSON
-error, or a non-UTF-8 body, so `--from-offset` and `--input` now exit 1 identically.
-
-### WR-13: The production crash-hook guard fails open when `ENV` is unset
-
-**Files modified:** `services/state_machine/config.py`, `services/state_machine/main.py`,
-`services/state_machine/README.md`, `tests/unit/test_state_machine_startup.py`,
-`tests/integration/test_state_machine_chaos.py`
-**Commit:** `94ee658`
-
-`config.crash_hook_allowed()` reads the **raw** `ENV` and requires it to be explicitly one of
-`dev`/`test`/`ci`/`local`. Reading the raw variable rather than `env_name()` is the point: the
-`"dev"` default still exists for logging, but letting it also unlock a SIGKILL hook would make
-an unconfigured production container the most permissive configuration there is. The chaos test
-now names `ENV=test` when it arms the hook. Tests cover eight refused values (including unset,
-blank, and three spellings of production) and six accepted ones.
-
-### WR-14: A malformed job descriptor is never released from `sched:polls:inflight`
-
-**Files modified:** `shared/scheduler/lua.py`, `services/poller/scheduler.py`,
-`tests/integration/test_scheduler_claim_release.py`
-**Commit:** `2484889`
-
-`LuaScheduler.drop()` removes a job from the inflight ZSET without re-enqueuing it (a single
-`ZREM` is already atomic, so no Lua). Both malformed-descriptor branches call it and log at
-`error`. Integration tests cover the fix and also pin the reaper-resurrection behaviour that
-made the leak permanent.
-
-### WR-15: Integration tests mutate `os.environ` without restoring it
+### WR-05: The integration-coverage instruction for CR-01/CR-02 was not carried out
 
 **Files modified:** `tests/integration/test_state_machine_chaos.py`,
-`tests/integration/test_state_machine_e2e.py`,
-`tests/integration/test_availability_events_persistence.py`
-**Commit:** `a439ea8`
+`tests/integration/test_state_machine_e2e.py`
+**Commit:** `c5955a0`
 
-The two function-scoped tests take `monkeypatch`; the module-scoped wiring fixture uses
-`pytest.MonkeyPatch.context()`. Subprocess environments are still snapshotted from
-`os.environ`, which sees the patched values.
+Both fixtures now use the shipped `OPENTABLE_SUCCESS_RESPONSE` **untrimmed**
+(`seatingTypes: ["bar", "standard"]`), so both tests exercise the two-slot path against real
+Redis, a real broker and TimescaleDB.
 
-### IN-01: `SlotState.UNKNOWN` is never written, so the branch that tests for it is dead
+The chaos test needs **no second restart** — the runtime is unchanged. With
+`MISE_CRASH_AFTER=state_write` and two slots, the SIGKILL lands after the *first* slot's
+per-slot flush and before the second slot is claimed, which is exactly the window per-slot
+flushing exists for. It asserts one event before the crash, then after one restart: both
+events, both seat types, no duplicate `event_id`, and **both `availability_events` rows**. That
+is the review's `kafka_send` scenario reached by a cheaper route, and it also proves the
+iteration-1 CR-02 fix (per-slot rather than message-wide flushing) against a real crash for
+the first time.
+
+The e2e test asserts two events with distinct `event_id`s and **one shared `booking_token`**
+(the fixture's whole point), one row each, and both closed with `duration_seconds == 20`. Its
+readiness condition now waits for `closed == 2` rather than `> 0`, so the assertions cannot
+race the second closure.
+
+### WR-06: `.env.example` documents the crash-hook interlock as the removed `ENV=prod` check
+
+**Files modified:** `.env.example`, `tests/unit/test_replay_determinism.py`
+**Commit:** `2f4cdeb`
+
+The banner now states the allowlist and that the interlock fails closed, so unset, blank,
+`staging` and `production` are all refused. The banner test asserts `ENV=prod` is **absent**
+and all four allowlist entries are present. **Mutation-checked** against the old wording.
+
+### WR-07: The migration tests downgrade a shared schema and restore it outside their failure path
+
+**Files modified:** `tests/integration/test_migration_0008.py`
+**Commit:** `fdc26cb`
+
+Both downgrade tests now restore head in a `finally`. The CR-03 guard is the important one:
+`assert failed.returncode != 0` is exactly what fires if the `DELETE` is reintroduced, and that
+failure used to leave the module-scoped database at revision 0007 so every later test in the
+module failed for an unrelated reason.
+
+### WR-08: `_close` parses a stored `event_id` with an unguarded `UUID()` inside the pure core
 
 **Files modified:** `services/state_machine/models.py`, `services/state_machine/engine.py`,
-`services/state_machine/README.md`, `tests/unit/test_engine_tristate_unknown.py`
-**Commit:** `feeada6`
+`tests/unit/test_engine_tristate_unknown.py`
+**Commit:** `f326e40`
 
-Took the "drop the enum member" branch, which is what D-41 already says (UNKNOWN is
-restaurant-level). A legacy or corrupt `"UNKNOWN"` hash field now fails `SlotRecord.from_json`,
-which `RedisStateStore.get_slots` already handles by dropping the field — the slot re-enters
-the PENDING cycle and must be confirmed again, which is the safe direction.
+Took the boundary branch: `SlotRecord.from_json` validates `event_id` where every other field
+is already validated, so `RedisStateStore.get_slots` drops a corrupt record with its existing
+`slot_record_unreadable` warning and the slot re-enters the PENDING cycle. `_close` keeps its
+`UUID(...)` call, now total, with a comment saying why.
 
-### IN-02: The crash hook's environment read is duplicated
+This interacts with CR-01 and the interaction is why it mattered more than the review's
+WARNING rating suggested: before the boundary check, one bad character raised out of
+`process()` into the transient arm, which now **rewinds and retries forever** against a record
+that can never parse. Six tests cover four corruption shapes, the well-formed round trip, and
+the end-to-end consequence (the corrupt record disappears, the sibling record survives).
 
-**Files modified:** `services/state_machine/consumer.py`, `tests/unit/test_state_machine_startup.py`
-**Commit:** `20fcaa0`
+### WR-09: `effective_coverage`'s docstring contradicts the caller
 
-`consumer.py` imports `crash_after` from `config`; a test asserts `config.py` is the only file
-in `services/`, `shared/` or `scripts/` that reads `MISE_CRASH_AFTER`.
+**Files modified:** `services/state_machine/parsers/opentable.py`
+**Commit:** `69248f7`
 
-### IN-03: `close_event` cannot tell "closed" from "row not found"
+One sentence, no code change, exactly as prescribed — plus a note that the old wording
+described the pre-WR-09 behaviour, so the next reader knows it was not simply wrong.
 
-**Files modified:** `services/state_machine/persistence.py`,
-`tests/integration/test_availability_events_persistence.py`
-**Commit:** `079fcd1`
+### IN-01: The `ParseError` arm of the poison handler is unreachable
 
-Captures `rowcount` (via a `CursorResult` cast — `Session.execute` is typed as returning the
-base `Result`) and logs `availability_event_close_matched_no_row` at warning level. Still not an
-error: the write is best effort by design (D-48). Two integration tests pin both directions.
+**Commit:** `e992c10` (folded into CR-02). Kept with a comment, for the reason given above:
+after CR-01 the alternative branch is a permanent retry loop.
 
-### IN-04: `kafka-ui` is pinned to `:latest`, and the compose `version:` key is obsolete
+### IN-02: `_assert_topics_exist` and `topic_partitions` leak their admin client
 
-**Files modified:** `ops/docker-compose.yml`, `tests/unit/test_compose_images_are_pinned.py` (new)
-**Commit:** `91135fd`
+**Files modified:** `services/state_machine/main.py`, `services/poller/main.py`,
+`scripts/replay_raw.py`
+**Commit:** `1bb9be8`
 
-Pinned to `provectuslabs/kafka-ui:v0.7.2` (tag pulled and verified to exist); `version:` removed;
-`docker compose config` still validates. A unit test fails on any unpinned image or a reinstated
-`version:` key.
+`await admin.start()` moved inside the `try` at all three sites. Verified from the installed
+`aiokafka` source that `AIOKafkaAdminClient.close()` is safe on a client that never finished
+starting (it guards on `_closed` and delegates to `AIOKafkaClient.close()`), so the `finally`
+cannot mask the original error with a secondary one.
 
-### IN-05: `make lint` does not type-check `scripts/`
+### IN-03: The new scheduler integration tests leak Redis connections
 
-**Files modified:** `Makefile`, `pyproject.toml`, `uv.lock`, `scripts/seed_restaurants.py`,
-`tests/unit/test_replay_determinism.py`
-**Commit:** `5d15a9e`
+**Files modified:** `tests/integration/test_scheduler_claim_release.py`
+**Commit:** `1b6e0ec`
 
-`make lint` now runs `mypy shared/ services/ scripts/`. That surfaced three real errors in
-`scripts/seed_restaurants.py` (a Phase 1 file): missing PyYAML stubs, fixed by adding
-`types-PyYAML` to the dev group, and two `str | None` arguments. The latter needed an explicit
-`is not None` ternary rather than `or`, because mypy types `optional or fallback` as optional —
-verified with a `reveal_type` probe. A test fails if a future edit drops `scripts/` from the
-mypy invocation.
+Both WR-14 tests take a `try/finally` that deletes the ZSETs and calls `await r.aclose()`. The
+reaper-resurrection test deliberately leaves a job on the ready queue, so its cleanup running
+on the failure path is what stops a failed assertion seeding the next test in the module.
 
-### IN-06: The chaos test's observation loop hammers Kafka with a new consumer group per pass
+### IN-04: `run_offset_mode`'s "nothing to replay" message hides the partition it read
 
-**Files modified:** `tests/integration/test_state_machine_chaos.py`
-**Commit:** `7b44fd2`
+**Files modified:** `scripts/replay_raw.py`, `tests/integration/test_replay_offset_range.py`
+**Commit:** `21e8b08`
 
-One consumer reads from the beginning for the whole 45 s window and accumulates; a single
-`getmany(timeout_ms=1000)` paces the loop by itself, so no `sleep` is needed. The duplicate
-assertion is unchanged and still fires on every pass.
+Took the "resolve it in `run_offset_mode`" branch rather than changing
+`fetch_offset_range`'s return type, which has ten call sites in the integration tests. The
+resolved id is passed back down, where `resolve_partition` re-runs as a validating no-op. The
+empty-range test now captures stderr and asserts the message names `{topic}[p0]`.
 
-### IN-07: Two slots colliding on one `(time_slot, seat_type)` are collapsed silently
+### IN-05: `DiffEngine.last_close_count` is assigned only at the end of `process()`
 
-**Files modified:** `services/state_machine/engine.py`, `services/state_machine/consumer.py`,
-`tests/unit/test_slot_key_collisions.py` (new), `tests/unit/test_engine_purity.py`
-**Commit:** `9752805`
+**Files modified:** `services/state_machine/engine.py`, `tests/unit/test_slot_key_collisions.py`
+**Commit:** `c4b76a4`
 
-`DiffEngine.last_collision_count` follows exactly the split `last_close_count` already uses: the
-pure core counts, the shell logs (`slot_key_collisions`). Neither counter changes a diff
-outcome, so replay stays byte-identical and `test_engine_purity` is unaffected. Tests cover a
-real collision, the shipped `bar` + `standard` fixture shape (two slots, *not* a collision), and
-the counter being reset between polls.
+Both counters reset on the first line. A new test drives `process()` against a store that
+raises mid-diff and asserts neither counter survives. **Mutation-checked.**
+
+### IN-06: `test_hash_helpers_are_exported…` has a stale rationale
+
+**Commit:** `7e58ed6` (folded into WR-03), as the review directed.
 
 ---
 
-## Goldens
+## Verification
 
-`tests/fixtures/raw_streams/*.events.jsonl` are **unchanged** — `git diff 3e0ea2d..HEAD --
-tests/fixtures/` is empty, and `test_two_replays_are_byte_identical_and_match_the_golden` passes.
+Every fix was verified by re-reading the changed region, then by the full static + unit gate;
+the consumer and fixture changes and the final state were additionally verified against the
+Docker integration suite. Mutation checks (confirming the new test fails against the pre-fix
+code) were run for **CR-01, CR-02, WR-06 and IN-05**.
 
-CR-01 did not require regenerating them. The claim key is a *consumer-shell* concern:
-`scripts/replay_raw.py` never took a claim at all (it dedupes on `event_id`), so the replay
-output was already the correct two-event stream and the goldens already reflect the fixed
-behaviour. The bug was that production disagreed with them. The three committed fixtures also
-each carry a single seating type per timeslot, so none of them exercises the collision anyway —
-which is precisely why the new `test_two_seat_types_one_token.py` drives the *shipped*
-`OPENTABLE_SUCCESS_RESPONSE` instead.
+No test was disabled, skipped, weakened, or marked xfail. Three existing tests were **edited**,
+each because the fix changed the observable value they pinned, and each was made stronger:
 
-WR-07 (one shared `CONFIRM_DELAY_MS`) and WR-09 (empty coverage → `ParseError`) were both checked
-against the fixture corpus before landing: the constant's value is unchanged at 8000, and every
-fixture carries well-formed `request_params`.
+* `test_offset_commit_policy.py::_shell` — the mock consumer's `seek`/`pause`/`resume` became
+  `MagicMock` rather than `AsyncMock`, because those methods are synchronous on
+  `AIOKafkaConsumer`; leaving them async produced un-awaited coroutines.
+* `test_two_seat_types_one_token.py` — substring check replaced by full decode-and-compare.
+* `test_replay_determinism.py` — the `.env.example` banner assertion gained the allowlist
+  requirement (WR-06's explicit instruction).
+
+No `time.sleep`, `requests`, or synchronous redis was added anywhere in `services/` or
+`shared/`. CR-01's backoff is deliberately **not** an `asyncio.sleep`: the repo's no-sleep gate
+bans it service-wide, and that gate was left exactly as it was.
 
 ## Deferred
 
-**D-46 decision text (documentation only).** The review notes that D-46's literal wording in
-`02-CONTEXT.md` — `SET event:{rid}:{date}:{party}:{token} … ; token = booking_token or slot_key`
-— carries the same defect as the code did, and asks for the decision text to be amended
-alongside. Not done here: `.planning/` decision records are locked context owned by the
-orchestrator, and this agent does not commit `.planning/` files. The amendment needed is a
-one-line change to D-46's key literal to
-`event:{rid}:{date}:{party}:{slot_key}:{token}`, noting it follows from D-36 (slot identity
-includes `seat_type`, `booking_token` is data). The code, the tests and
-`services/state_machine/README.md` are already consistent with the corrected form, and the
-`consumer.py` comment records the amendment inline as "D-46 as amended by CR-01".
+**D-46 / `02-CONTEXT.md` decision text (documentation only, one line).** D-46 was amended after
+iteration 1 to `SET event:{rid}:{date}:{party}:{slot_key}:{token}`. WR-04 makes the components
+**percent-escaped**, so the literal in the decision text is now one refinement behind the code
+again. Not changed here for the same reason as last iteration: `.planning/` decision records are
+locked context owned by the orchestrator, and this agent does not commit `.planning/` files. The
+amendment needed is to note that each component is percent-escaped (`quote(part, safe="")`)
+because `slot_key` and `token` are payload data and `slot_key` always contains a `:`. The code,
+the tests, `shared/redis_keys.py`'s docstring and `services/state_machine/README.md` are
+already consistent with the escaped form.
 
 ## Notes for the reviewer
 
-* **Two existing tests were changed rather than added to**, both because they pinned the defect
-  itself rather than the intent. Neither was weakened, and both changes are called out above:
-  the `.env.example` assertion (WR-06, commit `76aa3b1`) and the replay import gate (WR-07,
-  commit `5377f6a`, which was made strictly stronger and mutation-checked against five
-  violations). No test was disabled, skipped, or loosened.
-* **No `time.sleep`, `requests`, or sync redis** was added anywhere; IN-06 removed the only
-  place where a sleep would have been the obvious fix, in favour of a blocking `getmany`.
-* **Mutation checks were run for both criticals** and for the sharpened replay gate — each new
-  regression test was confirmed to fail against the pre-fix code before being committed.
-* A concurrent agent was writing Phase 3 artifacts into this repo during the run (three
-  interleaved `docs(03)` commits, plus scratch files under `tests/_research/` and `.mypyprobe/`
-  that briefly broke an unscoped `ruff check .`). Those are not mine and were not touched; the
-  scratch directories have since been removed by their owner, and the final unscoped
-  `uv run ruff check .` is clean.
+* **Two findings compounded each other, and the compounding is the interesting part.** CR-01's
+  rewind turns any exception escaping `process()` into an infinite retry loop rather than a
+  silent drop. That makes WR-08 (the unguarded `UUID()` in the pure core) and IN-01 (the
+  `ParseError` arm) materially more serious *after* CR-01 than before it, and both fixes are
+  written to say so. A reviewer checking CR-01 in isolation would not see this.
+* **The chaos test got stronger without getting slower.** Keeping `MISE_CRASH_AFTER=state_write`
+  and un-trimming the fixture puts the SIGKILL between slot 1's flush and slot 2's claim, which
+  is a better crash point for this purpose than the `kafka_send` variant the review suggested
+  and needs only the one restart the existing test already performs.
+* **`workflow.use_worktrees` is `false`**, so this run edited and committed on `main` in the
+  main checkout, with no worktree, no temp branch and no recovery sentinel.
+* A concurrent agent was writing Phase 3/4 planning artifacts throughout the run; four
+  `docs(03)` / `docs(04)` commits are interleaved with the nineteen `fix(02)` commits in
+  `git log`. Those are not mine, and nothing under `.planning/phases/03-*` or `04-*` was
+  staged or touched. Only the files listed under each finding above were staged.
 
 ---
 
-_Fixed: 2026-09-05T09:05:00Z_
+_Fixed: 2026-09-05T08:05:00Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
