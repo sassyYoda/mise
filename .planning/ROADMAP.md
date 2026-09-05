@@ -89,7 +89,17 @@ Plans:
   4. The global rate limiter caps Resy traffic at <= 80 req/min across all contexts and enforces >= 45s per-restaurant per-context interval — verified by a sustained 30-minute production trace in Grafana.
   5. Resy `availability.raw` events flow into the same Kafka topic as OpenTable and are diff'd by the existing State Machine without source-specific branching in the diff logic.
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 03-01-resy-parser-event-kernel-PLAN.md — register `parse_resy` in the Phase-2 parser registry and make `banned` a first-class non-success poll status, proving SC5 at the unit tier (wave 1)
+- [ ] 03-02-scheduling-kernel-metrics-redaction-PLAN.md — tier/backoff/rate keys, the atomic 80 rpm budget Lua, the 45 s floor, secret redaction and the single metric definition site (wave 1)
+- [ ] 03-03-resy-config-schema-seed-PLAN.md — migration 0009 `UNIQUE(slug, source)`, the seed YAML field split, the two-row seed gated on `RESY_ENABLED`, the human-gated venue-id resolver, and lazily-read Resy config (wave 1)
+- [ ] 03-04-browser-harness-fingerprints-stealth-PLAN.md — `make browsers`, the revision-aware Chromium guard, the in-process Resy stub, the coherent fingerprint table and per-context stealth (wave 2)
+- [ ] 03-05-context-pool-adapter-canary-PLAN.md — `ContextPool`, account/cookie normalisation, `ResyAdapter` calling `/4/find` with no page loads, and the pure soft-ban canary (wave 3)
+- [ ] 03-06-scheduler-fleet-integration-PLAN.md — registry dispatch, pre-dispatch rate/pause gates, backoff precedence, the ban reaction and fleet pause, concurrent workers and the metrics endpoint (SC3, SC5) (wave 4)
+- [ ] 03-07-soak-runbooks-docs-PLAN.md — the PERF-05 soak harness with a CI-sized variant, the zombie-browser regression test, both pending-human runbooks and the README rate-limit claim (wave 5)
+
 **UI hint**: no
 
 ### Phase 4: Notification Pipeline
@@ -166,7 +176,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 |-------|----------------|--------|-----------|
 | 1. Foundation, Admin & OpenTable Polling | 5/6 | In progress | - |
 | 2. State Machine & Event Pipeline | 4/4 | In progress | - |
-| 3. Resy & Playwright Fleet | 0/TBD | Not started | - |
+| 3. Resy & Playwright Fleet | 0/7 | Planned | - |
 | 4. Notification Pipeline | 0/TBD | Not started | - |
 | 5. API, Watchlist CRUD & SSE | 0/TBD | Not started | - |
 | 6. Pattern Intelligence & Frontend PWA | 0/TBD | Not started | - |
