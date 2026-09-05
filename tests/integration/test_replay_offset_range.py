@@ -126,7 +126,7 @@ async def test_omitting_the_upper_bound_stops_at_the_end_offsets(kafka_container
 
 @pytest.mark.asyncio
 async def test_an_empty_half_open_range_consumes_nothing_and_exits_2(
-    kafka_container, tmp_path: Path
+    kafka_container, tmp_path: Path, capsys
 ) -> None:
     """The adjacency edge: from == to is the empty interval, and exit 2 says so distinctly."""
     bootstrap = kafka_container.get_bootstrap_server()
@@ -137,6 +137,15 @@ async def test_an_empty_half_open_range_consumes_nothing_and_exits_2(
     out = tmp_path / "empty.events.jsonl"
     assert await run_offset_mode(topic, bootstrap, 3, 3, out) == 2
     assert not out.exists()
+
+    # IN-04: the diagnostic must name the partition it actually read. It used to print the
+    # REQUESTED one, which is None whenever --partition is omitted — i.e. always, on a
+    # single-partition topic — so the message degraded to the bare topic name and withheld
+    # the single fact WR-11 exists to state.
+    stderr = capsys.readouterr().err
+    assert f"{topic}[p0]" in stderr, (
+        f"the exit-2 diagnostic must name the resolved partition; got {stderr!r}"
+    )
 
 
 @pytest.mark.asyncio

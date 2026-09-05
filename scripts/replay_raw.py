@@ -365,10 +365,17 @@ async def run_offset_mode(
     An empty range is distinct from an empty result: exit 2 says "there was nothing there to
     replay", which is a different thing from "the replay produced no events".
     """
-    records = await fetch_offset_range(topic, bootstrap, from_offset, to_offset, partition)
+    # Resolve the partition HERE so the diagnostic below can name the one that was actually
+    # read (IN-04). It used to print the REQUESTED partition, which in the common
+    # single-partition case is None — so the flag was omitted, the message degraded to the
+    # bare topic name, and the exit-2 diagnostic never stated the one fact WR-11 exists to
+    # make explicit. Passing the resolved id back into `fetch_offset_range` re-runs
+    # `resolve_partition` as a validating no-op.
+    resolved = await resolve_partition(topic, bootstrap, partition)
+    records = await fetch_offset_range(topic, bootstrap, from_offset, to_offset, resolved)
     if not records:
         bound = "end_offsets" if to_offset is None else str(to_offset)
-        where = topic if partition is None else f"{topic}[p{partition}]"
+        where = f"{topic}[p{resolved}]"
         print(
             f"ERROR: no messages in {where}[{from_offset}, {bound}) — nothing to replay",
             file=sys.stderr,
