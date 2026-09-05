@@ -1,5 +1,5 @@
-version: "3.9"
-
+# The `version:` key is obsolete: Compose v2 ignores it and emits a deprecation warning on
+# every command. Removed deliberately — do not put it back (IN-04).
 services:
   kafka:
     # bitnami/kafka:3.8 was withdrawn from Docker Hub (`make up` failed to resolve it);
@@ -71,7 +71,9 @@ services:
       - default
 
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    # Pinned, like every other image here. `:latest` made `make up` non-reproducible, in a
+    # phase whose whole point was pinning the Kafka image (D-56).
+    image: provectuslabs/kafka-ui:v0.7.2
     container_name: mise-kafka-ui
     ports:
       - "8080:8080"
