@@ -15,7 +15,9 @@ files_modified:
   - tests/integration/test_notifier_chaos.py
   - tests/unit/test_idempotency_ordering.py
   - tests/unit/test_no_inline_sleep.py
+  - tests/unit/test_no_setnx_expire_pairs.py
   - tests/unit/test_kafka_consumer_config.py
+  - tests/unit/test_logs_never_carry_payload.py
 autonomous: true
 requirements: [NOTIF-02, NOTIF-03, NOTIF-04, NOTIF-05, NOTIF-06, PERF-01]
 
@@ -250,10 +252,12 @@ of `maybe_crash("provider_ack")` relative to the `notification_log` update, and 
 
 <task type="auto" tdd="true">
   <name>Task 3: The honest crash-table README, the ordering assertion, and the extended source gates</name>
-  <files>services/notifier/README.md, tests/unit/test_idempotency_ordering.py, tests/unit/test_no_inline_sleep.py, tests/unit/test_kafka_consumer_config.py</files>
+  <files>services/notifier/README.md, tests/unit/test_idempotency_ordering.py, tests/unit/test_no_inline_sleep.py, tests/unit/test_no_setnx_expire_pairs.py, tests/unit/test_kafka_consumer_config.py, tests/unit/test_logs_never_carry_payload.py</files>
   <read_first>
     - services/state_machine/consumer.py lines 1-20 (the module docstring that carries the Phase-2 crash contract) and services/state_machine/README.md if present (the crash table the Phase-2 review corrected for an over-claim)
     - tests/unit/test_no_inline_sleep.py in full (`SCANNED_FILES`, the comment-stripping helper, the non-vacuity assertion and the named-file set)
+    - tests/unit/test_no_setnx_expire_pairs.py in full (it already walks `services/`, `shared/` and `scripts/` recursively, so the new trees are inside it the moment they land — the gap is that nothing PROVES they are)
+    - tests/unit/test_logs_never_carry_payload.py in full (the existing payload-in-log assertions to extend to the notifier and API modules)
     - tests/unit/test_kafka_consumer_config.py in full (the factory-config assertions to extend for both notifier groups)
     - tests/unit/test_emission_idempotency.py and tests/unit/test_emit_flush_ordering.py (the fake-collaborator ordering-assertion style)
     - services/notifier/workers.py as written in Tasks 1-2
@@ -297,12 +301,21 @@ that backoff in the notifier is delegated to `tenacity`, whose own sleep lives i
 and is therefore out of scope for this file-scoped gate, and that any sleep appearing in OUR modules
 is a hand-rolled wait — so a future reader does not "fix" the gate by adding an allowlist. Extend
 `tests/unit/test_kafka_consumer_config.py` with the two notifier group ids.
+
+Extend `tests/unit/test_no_setnx_expire_pairs.py` with a single assertion that the collected file
+list actually CONTAINS the new trees — `services/notifier`, `services/notifier/providers` and
+`services/api` — naming specific files. The gate's directory walk already covers them, so no scanning
+change is needed; what is missing is proof, because a recursive glob that silently stops matching is
+exactly the vacuous-green failure the existing non-vacuity companion exists to prevent. Extend
+`tests/unit/test_logs_never_carry_payload.py` to the notifier and API modules with the same
+source-scan shape it already uses, so a log call carrying a rendered body, a recipient or a token
+fails at the unit tier rather than in production.
   </action>
   <verify>
-    <automated>cd /Users/aryanahuja/projects/mise &amp;&amp; uv run pytest tests/unit/test_idempotency_ordering.py tests/unit/test_no_inline_sleep.py tests/unit/test_kafka_consumer_config.py -q -W error::RuntimeWarning</automated>
+    <automated>cd /Users/aryanahuja/projects/mise &amp;&amp; uv run pytest tests/unit/test_idempotency_ordering.py tests/unit/test_no_inline_sleep.py tests/unit/test_no_setnx_expire_pairs.py tests/unit/test_kafka_consumer_config.py tests/unit/test_logs_never_carry_payload.py -q -W error::RuntimeWarning</automated>
   </verify>
   <acceptance_criteria>
-    - `uv run pytest tests/unit/test_idempotency_ordering.py tests/unit/test_no_inline_sleep.py tests/unit/test_kafka_consumer_config.py -q` exits 0.
+    - `uv run pytest tests/unit/test_idempotency_ordering.py tests/unit/test_no_inline_sleep.py tests/unit/test_no_setnx_expire_pairs.py tests/unit/test_kafka_consumer_config.py tests/unit/test_logs_never_carry_payload.py -q` exits 0.
     - `uv run python -c "from tests.unit.test_no_inline_sleep import SCANNED_FILES as f; ns={p.name for p in f}; print(len(f) >= 16, {'workers.py','main.py','push.py','links.py'} &lt;= ns)"` prints `True True`.
     - `grep -c "^|" services/notifier/README.md` returns at least `8` — the crash table plus the env table are present as tables, not as prose.
     - `uv run pytest tests/unit -q -W error::RuntimeWarning` exits 0.
@@ -346,8 +359,10 @@ written: `provider_id`, `sent_at`, `latency_ms`, `error`.
 **Make target referenced (added in 04-07):** `make notifier` -> `uv run python -m services.notifier`.
 
 **Extended gates:** `tests/unit/test_no_inline_sleep.py` (now covers `services/notifier`,
-`services/notifier/providers` and `services/api`), `tests/unit/test_kafka_consumer_config.py` (now
-covers both notifier consumer groups).
+`services/notifier/providers` and `services/api`), `tests/unit/test_no_setnx_expire_pairs.py` (now
+proves the new trees are inside its recursive walk), `tests/unit/test_kafka_consumer_config.py` (now
+covers both notifier consumer groups), `tests/unit/test_logs_never_carry_payload.py` (now covers the
+notifier and API modules).
 </artifacts_produced>
 
 <threat_model>
