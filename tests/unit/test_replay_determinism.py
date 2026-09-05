@@ -12,12 +12,14 @@ each of those silently invalidates every historical event id.
 """
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
 from scripts.replay_raw import (
     OutputPathError,
     main,
@@ -26,7 +28,6 @@ from scripts.replay_raw import (
     resolve_output_path,
     run_input_mode,
 )
-
 from shared.events import AvailabilityEvent
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -157,6 +158,34 @@ def test_the_script_declares_no_second_serializer_and_no_production_client() -> 
     import_lines = [ln for ln in source.splitlines() if ln.startswith(("import ", "from "))]
     for banned in ("redis", "sqlalchemy", "orjson", "services.state_machine.consumer"):
         assert not [ln for ln in import_lines if banned in ln], f"replay must not import {banned}"
-    assert "exclude_none" not in source
-    assert "exclude_unset" not in source
+
+    # Match the AST, not the text: the script's own docstrings explain WHY exclude_none is
+    # forbidden, and a text gate would be tripped by the explanation it exists to motivate
+    # (the comment-aware-gate pattern established in 02-02).
+    keywords = {
+        kw.arg
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        for kw in node.keywords
+    }
+    assert "exclude_none" not in keywords
+    assert "exclude_unset" not in keywords
     assert "to_bytes()" in source
+
+
+def test_default_stdout_mode_emits_the_golden_and_nothing_else() -> None:
+    """
+    `replay_raw.py --input X > events.jsonl` must produce a usable file.
+
+    shared.telemetry configures the stdlib root logger with `stream=sys.stdout` at DEBUG
+    outside prod, so importing the state machine puts asyncio's selector chatter on the very
+    stream --output falls back to. Without the stderr redirect this assertion fails with a
+    "Using selector: KqueueSelector" line ahead of the event.
+    """
+    result = subprocess.run(
+        [sys.executable, "scripts/replay_raw.py", "--input", str(HAPPY_INPUT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == HAPPY_GOLDEN.read_bytes()
