@@ -15,6 +15,7 @@ Named symbols: StateMachineConsumer, RAW_TOPIC, COMPLETED_TOPIC, EVENTS_TOPIC
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 from typing import Any
@@ -50,6 +51,14 @@ log = get_logger(__name__)
 RAW_TOPIC = "availability.raw"
 COMPLETED_TOPIC = "polls.completed"
 EVENTS_TOPIC = "availability.events"
+
+# How long a partition stays paused after a transient handler failure before the rewound
+# message is retried. Bounded and deliberately short: the point is to stop a hot retry loop
+# against a dead dependency, not to wait anything out. It is implemented with
+# `loop.call_later` + `AIOKafkaConsumer.pause/resume` rather than `asyncio.sleep`, because
+# `tests/unit/test_no_inline_sleep.py` bans an inline sleep anywhere in this service (D-43,
+# STATE-03) and pause/resume is the primitive Kafka provides for exactly this backpressure.
+TRANSIENT_RETRY_BACKOFF_SECONDS: float = 2.0
 
 
 def _maybe_crash(stage: str) -> None:
@@ -100,13 +109,22 @@ class StateMachineConsumer:
         # When present, the engine's writes are buffered and land where D-46 puts the state
         # write: after the broker has acked. See BufferedStateStore for why that matters.
         self.buffer = buffer
+        # Pending `resume` timers, one per rewound partition (see `_retry_later`).
+        self._resume_handles: dict[TopicPartition, asyncio.TimerHandle] = {}
 
     async def run(self) -> None:
         """Consume forever, one message at a time (D-47a: the factory sets max_poll_records=1)."""
         log.info("state_machine_loop_started")
-        while True:
-            msg = await self.consumer.getone()
-            await self.handle_message(msg)
+        try:
+            while True:
+                msg = await self.consumer.getone()
+                await self.handle_message(msg)
+        finally:
+            # A cancelled run() (SIGTERM) must not leave a timer holding a reference to a
+            # consumer that is about to be stopped.
+            for handle in self._resume_handles.values():
+                handle.cancel()
+            self._resume_handles.clear()
 
     async def handle_message(self, msg: Any) -> None:
         """
@@ -119,6 +137,14 @@ class StateMachineConsumer:
         committing it would silently drop an observation that a later attempt would have
         handled. For a polls.completed error/timeout that means losing the UNKNOWN mark
         permanently, along with any Close that had not run yet.
+
+        A transient failure therefore REWINDS the partition (`_retry_later`). Merely skipping
+        the commit is not enough and never was: the consumer POSITION has already advanced, so
+        `run()` pulls the next message and its own `commit(offset + 1)` sets the group
+        watermark strictly past the failed offset. The failed message ends up below the
+        watermark and is never redelivered — the exact behaviour the no-commit branch was
+        added to prevent. `tests/unit/test_offset_commit_policy.py` drives three messages
+        through `run()` and asserts no committed offset ever passes a failed one.
         """
         try:
             if msg.topic == RAW_TOPIC:
@@ -146,10 +172,64 @@ class StateMachineConsumer:
                 offset=msg.offset,
                 error=str(exc),
             )
-            # Deliberately NOT committed: leave the offset where it is so a restart
-            # reprocesses this message instead of skipping it.
+            # Deliberately NOT committed, AND rewound: not committing on its own leaves the
+            # consumer position past this message, so the next success would commit over it.
+            self._retry_later(msg)
             return
         await self._commit(msg)
+
+    def _retry_later(self, msg: Any) -> None:
+        """
+        Rewind this partition to the failed offset and pause it for a bounded backoff.
+
+        `seek` is what actually keeps the offset where the transient branch claims to leave
+        it: it makes THIS message the next one `getone()` returns, so the group watermark can
+        never move past it. `pause` + a `call_later` `resume` is the backoff — without it a
+        dead Redis turns redelivery into a hot loop that hammers the dependency and floods
+        the log. Other assigned partitions keep flowing while this one is parked, so the
+        stall is scoped to the partition that actually failed.
+
+        A rebalance between the failure and the rewind unassigns the partition, and both
+        `seek` and `pause` then raise `IllegalStateError` (a `KafkaError`). That is benign:
+        the uncommitted offset is redelivered to whoever owns the partition now, which is the
+        same outcome by a different route.
+        """
+        topic_partition = TopicPartition(msg.topic, msg.partition)
+        try:
+            self.consumer.seek(topic_partition, msg.offset)
+            self.consumer.pause(topic_partition)
+        except (KafkaError, ValueError) as exc:
+            log.warning(
+                "transient_retry_rewind_failed",
+                topic=msg.topic,
+                partition=msg.partition,
+                offset=msg.offset,
+                error=type(exc).__name__,
+            )
+            return
+
+        pending = self._resume_handles.pop(topic_partition, None)
+        if pending is not None:
+            pending.cancel()
+        self._resume_handles[topic_partition] = asyncio.get_running_loop().call_later(
+            TRANSIENT_RETRY_BACKOFF_SECONDS, self._resume_partition, topic_partition
+        )
+        log.warning(
+            "message_retry_scheduled",
+            topic=msg.topic,
+            partition=msg.partition,
+            offset=msg.offset,
+            backoff_seconds=TRANSIENT_RETRY_BACKOFF_SECONDS,
+        )
+
+    def _resume_partition(self, topic_partition: TopicPartition) -> None:
+        """Un-pause a partition parked by `_retry_later`; a lost assignment is a no-op."""
+        self._resume_handles.pop(topic_partition, None)
+        try:
+            self.consumer.resume(topic_partition)
+        except KafkaError:
+            # Reassigned elsewhere while we were paused; nothing left to resume.
+            return
 
     async def _handle_raw(self, msg: Any) -> None:
         raw = AvailabilityRaw.model_validate_json(msg.value)

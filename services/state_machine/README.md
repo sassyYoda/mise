@@ -116,9 +116,20 @@ that cannot be decoded will never decode, and it must never stall the partition.
 payloads mark the restaurant UNKNOWN and remove nothing (D-39).
 
 A **transient** failure — a Redis timeout, a broker outage, a producer error — is the opposite
-case and is deliberately *not* committed, so a restart reprocesses the message rather than
-skipping it. Committing there would silently drop an observation the next attempt would have
-handled: for a `polls.completed` `error`/`timeout` that is the UNKNOWN mark lost for good.
+case. It is deliberately *not* committed **and the partition is rewound to the failed offset**
+(`seek`), then paused for a bounded backoff and resumed. Both halves are required. Skipping the
+commit on its own does *not* keep the offset where it is: the consumer's position has already
+advanced, so `run()` immediately pulls the next message and its own `commit(offset + 1)` sets
+the group watermark strictly past the failed one, which is then below the watermark and never
+redelivered. Only the rewind makes the failed message the next one delivered. The pause is what
+stops a dead dependency turning redelivery into a hot loop; it is scoped to the affected
+partition, so any other assigned partition keeps flowing. Committing here would silently drop
+an observation the next attempt would have handled: for a `polls.completed` `error`/`timeout`
+that is the UNKNOWN mark lost for good.
+
+The backoff is `consumer.pause()` plus a `loop.call_later` `resume`, never an inline
+`asyncio.sleep` — `tests/unit/test_no_inline_sleep.py` bans a sleep anywhere in this service
+(D-43, STATE-03), and pause/resume is what Kafka provides for exactly this backpressure.
 
 ## Redis keys
 
