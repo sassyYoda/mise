@@ -55,6 +55,56 @@ class FakeRedis:
         return True
 
 
+class _FakeConsumer:
+    """A faithful stand-in for the cursor surface the shell touches (WR-04).
+
+    `seek`, `pause` and `resume` are SYNCHRONOUS on `AIOKafkaConsumer`; only `commit` and
+    `getone` are coroutines. A bare `AsyncMock` gets that backwards, and both consequences
+    matter. It emitted three `RuntimeWarning: coroutine ... was never awaited` per run — and a
+    warning that is always there is a warning nobody reads, which is precisely how an
+    un-awaited coroutine in real service code would hide. Worse, it made the transient rewind
+    in `test_a_crash_on_the_second_send_leaves_that_slot_pending_and_it_re_emits` a no-op that
+    only LOOKED exercised: `consumer.seek(...)` returned a coroutine object and moved nothing,
+    so a regression in `_retry_later` would have gone unnoticed here.
+
+    `test_offset_commit_policy.py` already patched these three to `MagicMock` for exactly this
+    reason; this is the same fix given a name and a recorded call log, so the tests can assert
+    the rewind happened instead of assuming it.
+    """
+
+    def __init__(self) -> None:
+        self.commits: list[dict] = []
+        self.seeks: list[tuple[str, int, int]] = []
+        self.paused: set[tuple[str, int]] = set()
+        self.resumes: list[tuple[str, int]] = []
+
+    async def commit(self, offsets: dict) -> None:
+        self.commits.append(offsets)
+
+    def seek(self, topic_partition, offset: int) -> None:  # noqa: ANN001 - aiokafka TopicPartition
+        self.seeks.append((topic_partition.topic, topic_partition.partition, offset))
+
+    def pause(self, topic_partition) -> None:  # noqa: ANN001
+        self.paused.add((topic_partition.topic, topic_partition.partition))
+
+    def resume(self, topic_partition) -> None:  # noqa: ANN001
+        self.paused.discard((topic_partition.topic, topic_partition.partition))
+        self.resumes.append((topic_partition.topic, topic_partition.partition))
+
+
+def _settle(shell: StateMachineConsumer) -> None:
+    """Cancel any resume timer the transient path armed.
+
+    `_retry_later` schedules a real `loop.call_later(TRANSIENT_RETRY_BACKOFF_SECONDS, ...)`
+    against a loop pytest-asyncio closes the moment the test returns, leaving a live handle
+    holding a reference to the shell. Tests that reach the transient arm must settle it.
+    """
+    for handle in shell._resume_handles.values():
+        handle.cancel()
+    shell._resume_handles.clear()
+
+
+
 def _raw(polled_at_epoch_ms: int) -> AvailabilityRaw:
     """The shipped fixture untrimmed: one timeslot, two seating types, two slots."""
     return make_raw(
@@ -84,7 +134,7 @@ def _shell(
     monkeypatch.setattr("services.state_machine.consumer.insert_event", AsyncMock())
     buffer = BufferedStateStore(durable)
     return StateMachineConsumer(
-        consumer=AsyncMock(),
+        consumer=_FakeConsumer(),  # type: ignore[arg-type]
         producer=producer,
         redis_client=redis_client,  # type: ignore[arg-type]
         scheduler=AsyncMock(),
@@ -159,10 +209,19 @@ async def test_a_crash_on_the_second_send_leaves_that_slot_pending_and_it_re_emi
         f"the un-sent slot must survive the crash as PENDING, got {states[STANDARD]}"
     )
 
+    # The transient arm must have REWOUND, not merely skipped the commit (CR-01, iteration 2).
+    # With the old bare AsyncMock this assertion was unwritable: `seek` returned a coroutine
+    # and recorded nothing, so the branch only looked exercised.
+    assert shell.consumer.seeks == [("availability.raw", 0, 0)]  # type: ignore[union-attr]
+    assert shell.consumer.paused == {("availability.raw", 0)}    # type: ignore[union-attr]
+    assert shell.consumer.commits == []                          # type: ignore[union-attr]
+    _settle(shell)
+
     # Redelivery of the same uncommitted offset, on a clean shell over the same durable state.
     restarted_producer = AsyncMock()
     restarted = _shell(durable, redis_client, restarted_producer, monkeypatch)
     await restarted.handle_message(_msg(T1))
+    _settle(restarted)
 
     resent = [
         AvailabilityEvent.model_validate_json(call.kwargs["value"])
@@ -197,7 +256,7 @@ async def test_the_analytics_row_is_written_before_the_state_write(monkeypatch) 
     producer = AsyncMock()
     buffer = BufferedStateStore(durable)
     shell = StateMachineConsumer(
-        consumer=AsyncMock(),
+        consumer=_FakeConsumer(),  # type: ignore[arg-type]
         producer=producer,
         redis_client=FakeRedis(),  # type: ignore[arg-type]
         scheduler=AsyncMock(),

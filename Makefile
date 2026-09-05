@@ -26,8 +26,14 @@ state-machine: ## Run the state machine consumer on host
 replay: ## Replay availability.raw through the state machine (ARGS="--input tests/fixtures/raw_streams/happy.jsonl")
 	uv run python scripts/replay_raw.py $(ARGS)
 
-test: ## Run unit tests
-	uv run pytest tests/unit -x -q
+test: ## Run unit tests (RuntimeWarning is an error: WR-04)
+	# -W error::RuntimeWarning: an un-awaited coroutine is a test that only LOOKS
+	# exercised. test_emit_flush_ordering.py used a bare AsyncMock for the consumer's
+	# SYNCHRONOUS seek/pause/resume, so the transient rewind moved nothing and emitted
+	# three warnings per run — and warnings that are always there are warnings nobody
+	# reads. Not set in pyproject.toml because the integration suite's containers emit
+	# their own; this gate is scoped to the code we own.
+	uv run pytest tests/unit -x -q -W error::RuntimeWarning
 
 test-integration: ## Run integration tests (requires running infra)
 	uv run pytest tests/unit tests/integration -v
