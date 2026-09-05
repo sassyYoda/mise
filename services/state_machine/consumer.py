@@ -24,6 +24,7 @@ from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 from redis.asyncio import Redis
 
+from services.state_machine.config import crash_after
 from services.state_machine.engine import (
     MASS_CLOSURE_AUDIT_THRESHOLD,
     DiffEngine,
@@ -51,16 +52,6 @@ COMPLETED_TOPIC = "polls.completed"
 EVENTS_TOPIC = "availability.events"
 
 
-def _crash_after() -> str | None:
-    """
-    TEST ONLY (D-51). The stage after which this process kills itself.
-
-    Read lazily from the environment so the chaos test controls it purely by launching a
-    subprocess. `main.run()` refuses to start when it is set and ENV is prod (T-02-04).
-    """
-    return os.getenv("MISE_CRASH_AFTER")
-
-
 def _maybe_crash(stage: str) -> None:
     """
     TEST-ONLY SIGKILL hook; a no-op unless MISE_CRASH_AFTER names this stage.
@@ -69,8 +60,15 @@ def _maybe_crash(stage: str) -> None:
     `state_write`, `commit`. SIGKILL and never SIGTERM: a catchable signal would let the
     consumer shut down cleanly and commit its offset, which is exactly the behaviour the chaos
     test has to prevent.
+
+    The environment read is `config.crash_after` and nothing else. This module used to carry a
+    byte-identical private copy while `main.run()`'s startup interlock consulted the config
+    one, and two readers of a single safety-critical variable is one too many: a change to the
+    variable's name or parsing in one place would silently disarm the interlock on the other.
+    Reading it lazily (not at import) is what lets the chaos test control the hook purely by
+    launching a subprocess.
     """
-    if _crash_after() == stage:
+    if crash_after() == stage:
         os.kill(os.getpid(), signal.SIGKILL)
 
 

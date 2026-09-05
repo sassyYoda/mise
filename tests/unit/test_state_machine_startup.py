@@ -153,3 +153,25 @@ async def test_no_hook_means_no_guard(monkeypatch, fake_redis) -> None:
 
     with pytest.raises(RuntimeError, match="topics missing"):
         await main.run()
+
+
+# -- IN-02: exactly one reader of MISE_CRASH_AFTER --
+
+
+def test_the_crash_hook_variable_has_exactly_one_reader() -> None:
+    """consumer.py used to carry a byte-identical private copy of config.crash_after().
+
+    Two readers of one safety-critical variable is one too many: renaming or re-parsing it in
+    one place would silently disarm the startup interlock while leaving the hook armed.
+    """
+    import re
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    readers = [
+        str(p.relative_to(repo_root))
+        for d in ("services", "shared", "scripts")
+        for p in sorted((repo_root / d).rglob("*.py"))
+        if re.search(r"""getenv\(\s*["']MISE_CRASH_AFTER""", p.read_text())
+    ]
+    assert readers == ["services/state_machine/config.py"], readers
