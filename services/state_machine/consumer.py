@@ -61,6 +61,31 @@ EVENTS_TOPIC = "availability.events"
 TRANSIENT_RETRY_BACKOFF_SECONDS: float = 2.0
 
 
+def _failure_shape(exc: BaseException) -> list[str] | str:
+    """
+    Describe a failure by its SHAPE, never by its content (T-02-03).
+
+    `str(exc)` is not safe to log here and never was. Pydantic v2 renders the OFFENDING INPUT
+    into a `ValidationError`'s message (`... input_value='SECRET-BOOKING-TOKEN-abc123' ...`),
+    and `availability.raw` is producer-supplied data whose `raw_response` carries every
+    booking token OpenTable returned. A booking token is a capability — it is what holds the
+    reservation — so `error=str(exc)` put a live credential in the log stream, and any payload
+    drift that lands a token in a wrongly-typed field puts it there with nobody doing anything
+    wrong. The same argument applies to an arbitrary driver exception on the transient path: a
+    redis-py or asyncpg message can carry a DSN, a URL or a query.
+
+    So: for a `ValidationError`, the field path and the error TYPE of each error, which is
+    everything needed to diagnose a schema mismatch and contains no input. For anything else,
+    the exception's dotted type name.
+    """
+    if isinstance(exc, ValidationError):
+        return [
+            f"{'.'.join(str(part) for part in error['loc'])}:{error['type']}"
+            for error in exc.errors()
+        ]
+    return f"{type(exc).__module__}.{type(exc).__name__}"
+
+
 def _maybe_crash(stage: str) -> None:
     """
     TEST-ONLY SIGKILL hook; a no-op unless MISE_CRASH_AFTER names this stage.
@@ -155,13 +180,22 @@ class StateMachineConsumer:
                 log.warning("unrouted_topic", topic=msg.topic, offset=msg.offset)
         except (ValidationError, ParseError) as exc:
             # Poison: undecodable now and undecodable on every redelivery. Log, drop, commit.
+            #
+            # `ParseError` is defence in depth, not a live route: `parse_raw` is the only
+            # source and `_handle_raw` already catches it into the D-39 UNKNOWN path, while
+            # `_handle_completed` does not parse at all. It stays in the tuple because the
+            # alternative branch is now much worse than a dead one: since CR-01 the transient
+            # arm REWINDS the partition, so a `ParseError` that ever did reach here would be
+            # retried forever against a payload that can never decode.
             self._discard()
             log.error(
                 "message_poison",
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
-                error=str(exc),
+                # Field paths and error types only — never `str(exc)`, which embeds the
+                # offending input value and therefore the payload (T-02-03).
+                error=_failure_shape(exc),
             )
         except Exception as exc:  # noqa: BLE001 — transient infrastructure failure
             self._discard()
@@ -170,7 +204,7 @@ class StateMachineConsumer:
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
-                error=str(exc),
+                error=_failure_shape(exc),
             )
             # Deliberately NOT committed, AND rewound: not committing on its own leaves the
             # consumer position past this message, so the next success would commit over it.
