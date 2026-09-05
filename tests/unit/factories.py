@@ -2,10 +2,11 @@
 Deterministic builders for state-machine unit tests (D-45, D-49).
 Every builder REQUIRES an explicit polled_at_epoch_ms and derives its poll id with uuid5,
 so no unit test can depend on the wall clock, on randomness, or on a real 8-second wait.
-Named symbols: make_raw, make_slot, make_parsed
+Named symbols: make_raw, make_slot, make_parsed, make_resy_envelope, make_resy_raw
 """
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID, uuid5
 
@@ -74,4 +75,90 @@ def make_parsed(
         poll_id=poll_id or deterministic_poll_id(source, rid, polled_at_epoch_ms),
         coverage=frozenset(coverage),
         slots=tuple(slots),
+    )
+
+
+def make_resy_envelope(
+    *,
+    dates: Sequence[str],
+    party_sizes: Sequence[int],
+    body: dict[str, Any] | None = None,
+    bodies: Mapping[tuple[str, int], Any] | None = None,
+    statuses: Mapping[tuple[str, int], int] | None = None,
+    default_status: int = 200,
+) -> dict[str, Any]:
+    """
+    Build the D-64 `availability.raw` envelope one Resy poll publishes.
+
+    Shape: `{"requests": [{"date", "party_size", "status", "body"}, ...]}` — one entry per
+    (date, party_size) pair the adapter actually issued, carrying the HTTP status that pair
+    came back with. This is the whole point of D-64: `coverage` is derived from the entries
+    that returned 200, so a rate-limited date can never be reported as "observed and empty"
+    and close every real slot on it (the OpenTable B-4 defect, prevented for Resy from day
+    one).
+
+    Entries are emitted in ascending `(date, party_size)` order so two builds of the same
+    inputs are byte-identical. Nothing here reads a clock or draws entropy (D-49).
+
+    `bodies` and `statuses` override `body` / `default_status` for individual pairs, which is
+    how the mixed-status matrix in `tests/unit/test_parsers_resy.py` is expressed without
+    inlining a payload.
+    """
+    bodies = bodies or {}
+    statuses = statuses or {}
+    requests: list[dict[str, Any]] = []
+    for date in sorted(dates):
+        for party_size in sorted(party_sizes):
+            pair = (date, party_size)
+            requests.append(
+                {
+                    "date": date,
+                    "party_size": party_size,
+                    "status": statuses.get(pair, default_status),
+                    "body": bodies.get(pair, body if body is not None else {}),
+                }
+            )
+    return {"requests": requests}
+
+
+def make_resy_raw(
+    *,
+    rid: int,
+    dates: Sequence[str],
+    parties: Sequence[int],
+    polled_at_epoch_ms: int,
+    body: dict[str, Any] | None = None,
+    bodies: Mapping[tuple[str, int], Any] | None = None,
+    statuses: Mapping[tuple[str, int], int] | None = None,
+    default_status: int = 200,
+    envelope: dict[str, Any] | None = None,
+    poll_id: UUID | None = None,
+) -> AvailabilityRaw:
+    """
+    An `AvailabilityRaw` with `source="resy"` whose `raw_response` is a D-64 envelope.
+
+    `polled_at_epoch_ms` is REQUIRED, exactly as in `make_raw`: no Resy test may depend on the
+    wall clock either. Pass `envelope=` to hand in a hand-built (or deliberately malformed)
+    payload instead of one this factory generates.
+    """
+    payload = (
+        envelope
+        if envelope is not None
+        else make_resy_envelope(
+            dates=dates,
+            party_sizes=parties,
+            body=body,
+            bodies=bodies,
+            statuses=statuses,
+            default_status=default_status,
+        )
+    )
+    return make_raw(
+        rid=rid,
+        dates=list(dates),
+        parties=list(parties),
+        response=payload,
+        polled_at_epoch_ms=polled_at_epoch_ms,
+        poll_id=poll_id,
+        source="resy",
     )
