@@ -40,6 +40,9 @@ A slot is identified by `(source, restaurant_id, date, party_size, time_slot, se
 | UNAVAILABLE / absent | seen again | PENDING | nothing — a re-open is a brand-new cycle with a new `event_id` |
 | any | poll errored, timed out, or was unparseable | unchanged | nothing; the restaurant meta is marked UNKNOWN |
 
+UNKNOWN is a **restaurant-level** mark, never a slot state: `SlotState` has three members and
+no UNKNOWN, because an errored poll must leave every slot at its last known state (D-41).
+
 Two rules keep this honest:
 
 * **Coverage bounds closure.** A slot is only closed or dropped when its `(date, party_size)`

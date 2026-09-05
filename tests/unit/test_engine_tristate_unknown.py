@@ -7,8 +7,10 @@ an older error never overrides a newer success. That is also what makes replay o
 """
 from __future__ import annotations
 
+import pytest
+
 from services.state_machine.engine import DiffEngine
-from services.state_machine.models import SlotState
+from services.state_machine.models import SlotRecord, SlotState
 from services.state_machine.store import MemoryStateStore
 from tests.unit.factories import make_parsed, make_slot
 
@@ -116,3 +118,31 @@ async def test_unknown_mark_leaves_every_slot_record_untouched() -> None:
     after = await store.get_slots(RID, DATE, PARTY)
     assert after == before
     assert after["19:00|bar"].state is SlotState.AVAILABLE
+
+
+# -- IN-01: UNKNOWN is a restaurant-level mark, never a slot state --
+
+
+def test_slot_state_has_no_unknown_member() -> None:
+    """D-41 puts UNKNOWN on the meta record; a slot keeps its last known state.
+
+    No code path ever constructed a SlotRecord(state=UNKNOWN), so the engine branch that
+    tested for it was dead — and such a record would also have fallen through both closure
+    branches in process() and persisted forever.
+    """
+    assert {s.value for s in SlotState} == {"PENDING", "AVAILABLE", "UNAVAILABLE"}
+    assert not hasattr(SlotState, "UNKNOWN")
+
+
+def test_an_unreadable_stored_state_is_rejected_rather_than_accepted() -> None:
+    """A legacy or corrupt 'UNKNOWN' field must fail the parse, not resurrect the member.
+
+    RedisStateStore.get_slots catches this and drops the field, so the slot re-enters the
+    PENDING cycle and has to be confirmed again — the safe direction.
+    """
+    payload = (
+        '{"s":"UNKNOWN","t":"tok","f":1,"p":"6f1b1c62-0000-4000-8000-000000000001",'
+        '"l":2,"c":null,"e":null}'
+    )
+    with pytest.raises(ValueError):
+        SlotRecord.from_json(payload)

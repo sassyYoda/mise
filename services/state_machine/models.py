@@ -23,12 +23,20 @@ from shared.events import AvailabilityEvent
 
 
 class SlotState(StrEnum):
-    """Per-slot lifecycle states (D-41). UNKNOWN is carried on the restaurant meta record."""
+    """
+    Per-slot lifecycle states (D-41).
+
+    There is deliberately no UNKNOWN member. D-41 puts UNKNOWN on the RESTAURANT meta record —
+    an errored or unparseable poll marks the restaurant and leaves every slot at its last known
+    state, because errors must never move a slot toward UNAVAILABLE. A slot-level UNKNOWN was
+    declared here but no code path ever constructed one, so the branch that tested for it was
+    dead, and a hypothetical UNKNOWN record would also have fallen through both closure
+    branches in `process()` and persisted forever.
+    """
 
     PENDING = "PENDING"
     AVAILABLE = "AVAILABLE"
     UNAVAILABLE = "UNAVAILABLE"
-    UNKNOWN = "UNKNOWN"
 
 
 @dataclass(frozen=True, slots=True)

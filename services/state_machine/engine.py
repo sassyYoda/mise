@@ -107,7 +107,7 @@ class DiffEngine:
 
             for key, slot in sorted(observed.items()):
                 record = records.get(key)
-                if record is None or record.state in (SlotState.UNAVAILABLE, SlotState.UNKNOWN):
+                if record is None or record.state is SlotState.UNAVAILABLE:
                     # Absent or previously closed: a re-open starts a brand-new cycle whose
                     # first_poll_id (and therefore event_id) differs from the previous one.
                     await self._open_cycle(parsed, slot, key)
