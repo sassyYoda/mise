@@ -1,0 +1,91 @@
+# Phase 4: Notification Pipeline - Context
+
+**Gathered:** 2026-09-05
+**Status:** Ready for planning
+**Mode:** Autonomous smart discuss — recommended answers accepted for every grey area (no human available; defaults chosen for consistency with PROJECT.md, REQUIREMENTS.md and Phases 1–3 decisions D-01..D-72)
+
+<domain>
+## Phase Boundary
+
+Build `services/notifier/`: a manual-commit Kafka consumer of `availability.events` that fans each confirmed slot out to matching active watchlist entries, claims a Layer-2 `SET NX EX 86400` idempotency key per (watch, event, channel) before any provider call, enqueues per-channel jobs on `notifications.queued`, delivers via Resend (email), Twilio (SMS) and VAPID Web Push, records every send in `notification_log` with status transitions and measured detection-to-notification latency, publishes `notifications.sent`, and survives `kill -9` between provider ack and offset commit with zero duplicate sends. Also: HMAC-signed deep links through `/go/{token}` with click tracking and a `slot_still_available` check (PERF-03), one-click HMAC unsubscribe links, the Twilio inbound STOP webhook, and the latency (PERF-01) / false-positive (PERF-03) measurement scripts. Requirements: NOTIF-01..07, PERF-01, PERF-03.
+
+**Human-gated (build around, never block):** Twilio A2P 10DLC approval + a live US number, Resend domain verification + API key, the real-iPhone PWA push test, the 24-hour PERF-01 production window. All provider code paths run locally against `respx`-mocked provider APIs and a `NOTIFY_DRY_RUN` mode; the human steps get `STATUS: pending-human` runbooks.
+
+Out of scope: watchlist CRUD / management UI (Phase 5 — this phase defines the token + link contracts Phase 5 reuses), the PWA service worker (Phase 6 — this phase ships the push *sender* and an iOS runbook), Grafana panels (Phase 7 — metrics are exported here).
+
+</domain>
+
+<decisions>
+## Implementation Decisions
+
+### Fan-out and matching (NOTIF-01)
+- **D-73:** `services/notifier/consumer.py` consumes `availability.events` with `AIOKafkaConsumer("availability.events", group_id="notifier", enable_auto_commit=False, max_poll_records=1)` (varargs, constructed inside `run()` — Phase 2 B-1). For each `AvailabilityEvent` it resolves the restaurant via `restaurants(source, platform_id)` → `restaurants.id` (D-52 join key) and selects `watchlist_entries` where `status='active'`, `restaurant_id` matches, `party_size == event.party_size` (exact; multi-size watches are V2-09), `date_from <= event.date <= date_to`, `time_window_from/to` (if set) contains `time_slot`, `days_of_week` (if set, comma list of `mon..sun`) contains the service weekday, `seat_type_filter` (if set) equals `seat_type`. Matching lives in a pure function `match_watches(event, rows) -> list[Match]` in `services/notifier/matching.py` (unit-tested with a parametrised matrix); the SQL only pre-filters by restaurant/status/party/date.
+- **D-74:** Per-user daily cap `rate:notif:{user_id}:{YYYY-MM-DD}` (INCR + EXPIRE 172800 in one Lua/MULTI, cap `NOTIFY_DAILY_CAP_PER_USER` default 50); over-cap matches are logged `notification_rate_limited` and recorded in `notification_log` with `status='suppressed'` (no provider call).
+- **D-75:** Each match yields one `NotificationQueued` message per channel in `watch.channels` (`email,sms,push`) published to `notifications.queued` with key `{watch_id}` — schema in `shared/events.py`: `job_id: UUID` (uuid5 over `notif:{watch_id}:{event_id}:{channel}` — deterministic), `watch_id`, `user_id`, `event_id`, `channel: Literal["email","sms","push"]`, `event: AvailabilityEvent` (embedded so workers need no second lookup), `queued_at_epoch_ms`. The same process consumes `notifications.queued` with a second consumer (group `notifier-workers`) and dispatches to channel workers — one service, two consumer loops (ARCHITECTURE "merged dispatcher + workers"). Kafka topic `notifications.dlq` (retention 30 d) is added to `scripts/create_topics.py` for dead letters.
+
+### Layer-2 idempotency and offset commit (NOTIF-02, NOTIF-06)
+- **D-76:** Before any provider call the worker runs `set_nx_ex(r, notif_idempotency_key(watch_id, event_id, channel), "1", 86400)` where the key is `notif:{watch_id}:{event_id}:{channel}` — the ROADMAP SC2 key `notif:{watch_id}:{event_id}` extended by the channel suffix because one watch has up to three independent sends; the un-suffixed prefix is documented as the SC2 key family. NX failure → `notification_log` row `status='duplicate_suppressed'`, no send. Ordering per job: claim NX → provider call (with retries) → `notification_log` insert (`status='sent'|'failed'`, `provider_id`, `sent_at`, `latency_ms`) → publish `notifications.sent` → commit offset. On a *definitive* provider failure the claim is **deleted** so a later redelivery/retry can re-attempt; on crash between claim and provider ack the notification is lost for 24 h (documented trade-off — prefer a missed alert over a double send, ARCHITECTURE §Failure 3). Zero two-command `SETNX`+`EXPIRE` anywhere (extend the Phase 2 grep test to `services/notifier`).
+- **D-77:** Both consumers commit manually after the message's work is durable; on handler exceptions the consumer seeks back to the failed offset (the Phase 2 CR-01 fix pattern) instead of skipping. `enable.auto.commit=false` is asserted by a unit test on the consumer factory config.
+
+### Providers (NOTIF-03, NOTIF-04, NOTIF-05)
+- **D-78:** The `resend`, `twilio` and `pywebpush` SDKs are synchronous `requests`-based clients and are **not** imported by services. Providers are thin async clients over their REST APIs using the shared `httpx.AsyncClient` (D-05): `services/notifier/providers/{email,sms,push}.py` with `EmailProvider.send(to, subject, html, text, headers) -> ProviderResult(provider_id, status_code)`, `SmsProvider.send(to_e164, body) -> ProviderResult`, `PushProvider.send(subscription, payload) -> ProviderResult`. Resend: `POST https://api.resend.com/emails` (Bearer `RESEND_API_KEY`, from `NOTIFY_FROM_EMAIL`). Twilio: `POST https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json` (basic auth `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`, `MessagingServiceSid=TWILIO_MESSAGING_SERVICE_SID`, `StatusCallback` to the API webhook). Web Push: payload encryption (aes128gcm) via `pywebpush.WebPusher(...).encode(...)` (pure crypto, no network — verify in research) or `http_ece` directly, VAPID `Authorization` header via `py_vapid`/`cryptography` from `VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, delivered with httpx `POST {endpoint}` and `TTL: 60`, `Urgency: high`. Every provider base URL is env-overridable (`RESEND_API_BASE`, `TWILIO_API_BASE`) so tests point `respx` at them.
+- **D-79:** Retries with `tenacity`: email 3 attempts (exp backoff 1–8 s) then dead-letter to `notifications.dlq` + `notification_log.status='failed'`; SMS 2 attempts then `failed` + a fallback email to the user (`sms_failed_fallback` template) when email is one of the watch's channels; push: on 404/410 mark `push_subscriptions.revoked_at` and fall back to email; on other failures 2 attempts then `failed`. Provider 429 honours `Retry-After` via tenacity wait (no bare `asyncio.sleep` loops outside tenacity's wait — the no-sleep gate is scoped to explicit `asyncio.sleep(` calls in `services/notifier`, tenacity's internal sleep is allowed and documented).
+- **D-80:** Channel enablement is env-driven: a provider is constructed only when its credentials are present; a job for a disabled channel is recorded `status='failed'`, `error='provider_unconfigured'` (and still counts toward the idempotency claim being deleted so it can be retried once configured). `NOTIFY_DRY_RUN=true` short-circuits every provider with a fake `provider_id='dry-run-<job_id>'`, records `sent`, and logs the rendered message — the local demo path.
+- **D-81:** Templates in `services/notifier/templates.py` using `string.Template` (no new deps): email HTML + text (restaurant, date/time, party size, seat type, "Book now" CTA = `/go/{token}`, estimated-window line when the pattern hook returns text, unsubscribe footer = `/unsubscribe/{token}` + `List-Unsubscribe` / `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers); SMS ≤ 160 chars (`"{restaurant} {date} {time} party of {n} — book: {short /go link}  Reply STOP to opt out"`, asserted ≤ 160 with the longest seeded name); push JSON `{title, body, url, tag=event_id}`. The estimated-window text comes from `services/notifier/pattern_hook.py :: estimate_window_text(source, restaurant_id) -> str | None` which returns `None` in this phase (Phase 6 PATTERN-03 implements it) — templates omit the line when `None`.
+
+### Signed links, `/go/[token]`, unsubscribe, STOP webhook (NOTIF-04, NOTIF-07, PERF-03)
+- **D-82:** `shared/tokens.py`: versioned HMAC-SHA256 tokens `base64url(json payload) + "." + base64url(hmac)` with payload `{v: token_version, p: purpose, ...claims, iat, exp}`; secrets from `HMAC_MGMT_SECRET_V{n}` env (current version `HMAC_TOKEN_VERSION`, default 1); verification accepts the current and previous version during a grace window (`HMAC_GRACE_UNTIL` ISO date) — this is the Phase 5 WATCH-03 rotation contract, defined here because deep links and unsubscribe links need it now. Purposes used in this phase: `go`, `unsubscribe`, `sms_stop` (Phase 5 adds `manage`).
+- **D-83:** Deep links: `shared/links.py :: platform_booking_url(source, platform_id, slug, date, party_size, time_slot) -> str` — OpenTable `https://www.opentable.com/restref/client/?rid={rid}&datetime={date}T{HH:MM}&covers={party}` and Resy `https://resy.com/cities/ny/{slug}?date={date}&seats={party}` (both `[ASSUMED]` URL schemes, documented with `TODO(spike)` markers; unit-tested for shape). Every channel links to `{PUBLIC_BASE_URL}/go/{token}` where the `go` token carries `{notification_log_id, event_id, watch_id}`.
+- **D-84:** Phase 4 creates the FastAPI application skeleton that Phase 5 extends: `services/api/app.py :: create_app()` with routers `services/api/routers/links.py` (`GET /go/{token}` → verify token, set `notification_log.clicked_at`, compute `slot_still_available` by reading the Phase 2 Redis slot record (`AVAILABLE` → true, else false), persist it, then `302` to the platform URL when available or `200` with a minimal "sorry, that table is gone" HTML (Phase 6 restyles it); `GET|POST /unsubscribe/{token}` → set the watch `status='paused'` (and `users.sms_opt_out=true` when purpose is `sms_stop`), idempotent) and `services/api/routers/webhooks.py` (`POST /webhooks/twilio/inbound` — validates `X-Twilio-Signature` per Twilio's HMAC-SHA1 scheme in `shared/twilio_signature.py` (no SDK), matches the sender by `users.phone_hash`, flips every active watch of that user to `status='paused'` and sets `sms_opt_out`, replies TwiML `<Response/>`; `POST /webhooks/twilio/status` — records `delivered_at`/`status='delivered'|'failed'` on `notification_log` by `provider_id`; `POST /webhooks/resend` — `email.delivered`/`email.bounced` → same columns, signature verified with `RESEND_WEBHOOK_SECRET` (Svix HMAC) when set). Served by `uvicorn services.api.app:app`; `make api`. Phase 5 adds `/watches`, `/api/feed/live`, `/admin`, `/api/metrics`. The SC4 "within 5 seconds" is met by doing the DB write synchronously in the request.
+- **D-85:** Migration 0010: `users.phone_hash TEXT` (HMAC-SHA256 of E.164 with `PHONE_HASH_SECRET`, unique index, nullable) + `users.sms_opt_out BOOLEAN NOT NULL DEFAULT false`; new table `push_subscriptions(id, user_id FK, endpoint TEXT UNIQUE, p256dh TEXT, auth TEXT, user_agent TEXT, created_at, revoked_at NULL)`; `notification_log.latency_ms INTEGER NULL`, `notification_log.error TEXT NULL`; `notification_log.status` values documented: `queued|sent|delivered|clicked|failed|suppressed|duplicate_suppressed`. `shared/crypto.py :: encrypt_phone(e164) -> bytes / decrypt_phone(bytes) -> str` implements **AES-256-GCM via `cryptography`** with key `PHONE_ENCRYPTION_KEY` (32-byte base64) — pgcrypto has no GCM mode, so WATCH-05's "AES-256-GCM via pgcrypto" is satisfied at the application layer with the ciphertext in the existing BYTEA column (documented deviation; Phase 5 writes with `encrypt_phone`, this phase decrypts only inside `SmsProvider` at send time).
+
+### Latency and false-positive measurement (PERF-01, PERF-03)
+- **D-86:** `NotificationSent` (`shared/events.py`): `job_id, watch_id, user_id, event_id, channel, status, provider_id, sent_at_epoch_ms, event_produced_at_epoch_ms, latency_ms` published to `notifications.sent` (key `{watch_id}`); `latency_ms = sent_at - event.produced_at_epoch_ms` (D-45: detection timestamp). Prometheus (`shared/metrics.py`): `notification_latency_seconds{channel}` histogram, `notifications_total{channel,status}` counter, `notification_delivery_rate` derived in Grafana. `scripts/check_notification_latency.py` prints p50/p95 per channel over a window from `notification_log.latency_ms` and exits 0 iff overall p95 <= 60 s, SMS p95 <= 10 s, push p95 <= 5 s (exit 2 when < 100 samples); `scripts/check_false_positive_rate.py` computes daily `slot_still_available=false / clicked` and exits 0 iff < 2 %. The 24 h production measurement is pending-human (`docs/runbooks/perf01-latency.md`).
+
+### Test strategy
+- **D-87:** Unit: matching matrix, templates (SMS ≤ 160), token sign/verify/rotation/expiry, link builders, Twilio signature, phone crypto round-trip, provider request shapes via `respx` (Resend/Twilio/push endpoint incl. 404/410 revocation), idempotency ordering with a fake provider, no-sleep and no-SETNX grep gates. Integration (testcontainers + respx): `availability.events` → matched watch (seeded users/watches through the ORM) → `notifications.queued` → `notifications.sent` + `notification_log` row with `latency_ms`; chaos: subprocess notifier with `MISE_CRASH_AFTER=provider_ack` (SIGKILL after the mocked provider returns 2xx, before commit) → restart → exactly one provider call and one `sent` row per (watch, channel); API routes via `httpx.AsyncClient(transport=ASGITransport(app))` for `/go`, `/unsubscribe`, `/webhooks/twilio/inbound` (STOP flips the watch within one request). `docs/runbooks/ios-pwa-push.md` and `docs/runbooks/perf01-latency.md` carry `STATUS: pending-human`.
+
+### Claude's Discretion
+- Exact template wording, subject lines, `string.Template` layout; provider timeout values (5 s connect / 10 s read default); histogram buckets.
+- Whether the two consumer loops share one `AIOKafkaProducer` (they should — one producer per process, D-02).
+- Internal module split of `services/notifier/` (`consumer.py`, `dispatcher.py`, `workers.py`, `providers/`, `templates.py`, `matching.py`, `persistence.py`, `main.py`, `config.py` is the suggested shape).
+
+</decisions>
+
+<code_context>
+## Existing Code Insights
+
+### Reusable Assets
+- `shared/events.py :: AvailabilityEvent` (deterministic event_id, `produced_at_epoch_ms` = detection time) and `FAILED_POLL_STATUSES`; add `NotificationQueued`, `NotificationSent`.
+- `shared/kafka.py :: make_producer/make_consumer` (manual commit defaults); `services/state_machine/consumer.py` — seek-back-on-failure + commit pattern and the `MISE_CRASH_AFTER` crash hook (guarded by `ENV`), `services/state_machine/main.py` — signal handlers + `AsyncExitStack` lifespan; `services/state_machine/config.py` — lazy env accessors (never module constants).
+- `shared/redis_keys.py :: set_nx_ex`, key helpers, MULTI/EXEC helpers; `shared/db.py` ORM (`User`, `Restaurant`, `WatchlistEntry`, `NotificationLog`) + `get_async_session()`; `shared/http_client.py` singleton `httpx.AsyncClient`; `shared/telemetry.py` redaction (extend with `authorization`, `api_key`, phone numbers); `shared/metrics.py` (Phase 3).
+- `services/state_machine/store.py :: RedisStateStore` — read a slot record for `slot_still_available`.
+- `migrations/versions/0008/0009` — migration shape with guards; `scripts/create_topics.py` — add `notifications.dlq`; `scripts/check_poll_success.py` — exit-code convention.
+- Tests: `tests/integration/conftest.py`, `test_state_machine_chaos.py` (subprocess SIGKILL pattern), `tests/unit/factories.py`.
+
+### Established Patterns
+- Async-only; every Redis key in `shared/redis_keys.py`; every Kafka schema in `shared/events.py`; env read lazily; small atomic commits; grep gates with non-vacuity checks.
+
+### Integration Points
+- Consumes `availability.events` (Phase 2); produces `notifications.queued`, `notifications.sent`, `notifications.dlq`.
+- Reads `watchlist_entries`/`users`/`restaurants`/`push_subscriptions`; writes `notification_log`, `users.sms_opt_out`, `watchlist_entries.status`.
+- `services/api/` skeleton consumed/extended by Phase 5; tokens contract (`shared/tokens.py`) reused by Phase 5 management links; `pattern_hook` implemented by Phase 6.
+- Makefile: `make notifier`, `make api`, `make verify-perf01`, `make verify-perf03`; `.env.example` provider block.
+
+</code_context>
+
+<specifics>
+## Specific Ideas
+
+- The chaos test should read like the ROADMAP SC2 sentence: kill between provider ack and commit, restart, assert one Twilio "SID" — use the mocked Twilio endpoint's call log as the SID-level oracle.
+- Keep the notifier's `README.md` crash table honest (the Phase 2 review caught an over-claim there).
+
+</specifics>
+
+<deferred>
+## Deferred Ideas
+
+- Multi-party-size watches (V2-09); per-channel quiet hours; SMS link shortener (use the `/go` token as-is; keep it short by using a compact token payload).
+- Push subscription registration endpoint + service worker — Phase 5 API / Phase 6 PWA.
+
+</deferred>
