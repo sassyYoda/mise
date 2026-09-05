@@ -8,9 +8,12 @@ change that makes the adapter loop party sizes.
 """
 from __future__ import annotations
 
+import pytest
+
 from services.poller.sources.opentable.fixtures import OPENTABLE_SUCCESS_RESPONSE
 from services.state_machine.engine import DiffEngine
 from services.state_machine.models import Close, Emit, SlotState
+from services.state_machine.parsers.errors import ParseError
 from services.state_machine.parsers.opentable import effective_coverage
 from services.state_machine.store import MemoryStateStore
 from tests.unit.factories import make_parsed, make_raw, make_slot
@@ -108,3 +111,48 @@ async def test_out_of_window_date_is_never_closed() -> None:
     )
     assert [d for d in decisions if isinstance(d, Close)] == []
     assert (await store.get_slots(RID, DATE, 2))["19:00|bar"].state is SlotState.AVAILABLE
+
+
+# -- WR-08: request_params is producer-controlled data, not a validated schema --
+
+
+@pytest.mark.parametrize(
+    "parties",
+    [["two"], [None], [{"party": 2}], [[2]]],
+    ids=["non_numeric_string", "null", "mapping", "list"],
+)
+def test_an_unusable_party_size_is_a_parse_error(parties) -> None:
+    """A bare int() raises ValueError/TypeError, and neither reaches the UNKNOWN path."""
+    with pytest.raises(ParseError):
+        effective_coverage({"rid": RID, "dates": [DATE], "party_sizes": parties})
+
+
+def test_a_numeric_string_party_size_is_still_accepted() -> None:
+    """Tolerance, not strictness, is the goal: '2' is unambiguously two covers."""
+    assert effective_coverage({"dates": [DATE], "party_sizes": ["2"]}) == frozenset({(DATE, 2)})
+
+
+@pytest.mark.parametrize(
+    "dates",
+    [[20260501], [None], [{"date": DATE}]],
+    ids=["int", "null", "mapping"],
+)
+def test_an_unusable_date_is_a_parse_error(dates) -> None:
+    """str() never raises, so a bad date would silently become coverage matching no slot."""
+    with pytest.raises(ParseError):
+        effective_coverage({"rid": RID, "dates": dates, "party_sizes": [2]})
+
+
+async def test_an_unusable_party_size_surfaces_through_parse_raw() -> None:
+    """The whole point: it must arrive as a ParseError at the consumer's UNKNOWN branch."""
+    from services.state_machine.parsers import parse_raw
+
+    raw = make_raw(
+        rid=RID, dates=[DATE], parties=[2], response=OPENTABLE_SUCCESS_RESPONSE,
+        polled_at_epoch_ms=T0,
+    )
+    broken = raw.model_copy(
+        update={"request_params": {"rid": RID, "dates": [DATE], "party_sizes": ["two"]}}
+    )
+    with pytest.raises(ParseError):
+        parse_raw(broken)

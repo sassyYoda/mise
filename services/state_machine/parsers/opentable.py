@@ -30,13 +30,28 @@ def effective_coverage(request_params: Mapping[str, Any]) -> frozenset[tuple[str
     make every party-4 slot "covered and absent" on every poll, closing them all falsely.
 
     Returns an empty set when either list is empty — an unbounded poll closes nothing.
+
+    Raises ParseError for a party size or a date that is present but unusable. `request_params`
+    is producer-controlled data, not a validated schema, and a bare `int(parties[0])` raises
+    ValueError or TypeError, neither of which is a ParseError: the exception would escape
+    `parse_raw`, bypass the `except ParseError` UNKNOWN path in the consumer, be swallowed by
+    the blanket handler, and the restaurant would be neither marked UNKNOWN nor retried.
     """
     # TODO(P3/POLL-02): widen to the full party_sizes list when the adapter loops party sizes.
     dates = request_params.get("dates") or []
     parties = request_params.get("party_sizes") or []
     if not isinstance(dates, list) or not isinstance(parties, list) or not dates or not parties:
         return frozenset()
-    return frozenset((str(d), int(parties[0])) for d in dates)
+    try:
+        party = int(parties[0])
+    except (TypeError, ValueError) as exc:
+        raise ParseError(f"request_params.party_sizes[0] is not an integer: {exc}") from exc
+    bad_dates = [d for d in dates if not isinstance(d, str)]
+    if bad_dates:
+        # str() never raises, so an int or a dict here would silently become a coverage entry
+        # that matches no stored slot — a poll that closes nothing and reports perfect health.
+        raise ParseError(f"request_params.dates holds {len(bad_dates)} non-string entries")
+    return frozenset((d, party) for d in dates)
 
 
 def _seating_types(timeslot: Mapping[str, Any]) -> list[str | None]:
