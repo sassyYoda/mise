@@ -60,6 +60,18 @@ EVENTS_TOPIC = "availability.events"
 # STATE-03) and pause/resume is the primitive Kafka provides for exactly this backpressure.
 TRANSIENT_RETRY_BACKOFF_SECONDS: float = 2.0
 
+# How many times `_resume_partition` may re-schedule itself after an unexpected failure before
+# it gives up and says so (WR-06). Bounded because the callback re-arms its own timer: against
+# a consumer that is genuinely gone, an unbounded chain is a log flood with no end.
+MAX_RESUME_ATTEMPTS: int = 3
+
+# Prometheus counter names, declared here as placeholders so Phase 7's exporter has a stable
+# hook and so the structlog events carry the name a dashboard will use (D-51 discretion note).
+# They are emitted as a `metric=` field rather than incremented: this phase ships no registry,
+# and inventing one in the consumer would put a second source of truth next to shared/.
+METRIC_MESSAGES_DEAD_LETTERED = "state_machine_messages_dead_lettered_total"
+METRIC_PARTITION_RESUME_ABANDONED = "state_machine_partition_resume_abandoned_total"
+
 
 def _failure_shape(exc: BaseException) -> list[str] | str:
     """
@@ -227,18 +239,25 @@ class StateMachineConsumer:
         `seek` and `pause` then raise `IllegalStateError` (a `KafkaError`). That is benign:
         the uncommitted offset is redelivered to whoever owns the partition now, which is the
         same outcome by a different route.
+
+        The catch is `Exception` and not `(KafkaError, ValueError)` for the same reason as
+        `_resume_partition` (WR-06): aiokafka's `SubscriptionState` asserts its way through a
+        stop/rebalance race, and an `AssertionError` escaping here escapes `handle_message`
+        too — it is raised from the transient EXCEPT block, so nothing above catches it and
+        `run()` terminates. Failing to rewind is a bad outcome; killing the consumer because
+        the rewind failed is a worse one.
         """
         topic_partition = TopicPartition(msg.topic, msg.partition)
         try:
             self.consumer.seek(topic_partition, msg.offset)
             self.consumer.pause(topic_partition)
-        except (KafkaError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 — raised from an except block; nothing above catches
             log.warning(
                 "transient_retry_rewind_failed",
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
-                error=type(exc).__name__,
+                error=_failure_shape(exc),
             )
             return
 
@@ -256,14 +275,56 @@ class StateMachineConsumer:
             backoff_seconds=TRANSIENT_RETRY_BACKOFF_SECONDS,
         )
 
-    def _resume_partition(self, topic_partition: TopicPartition) -> None:
-        """Un-pause a partition parked by `_retry_later`; a lost assignment is a no-op."""
+    def _resume_partition(self, topic_partition: TopicPartition, attempt: int = 1) -> None:
+        """
+        Un-pause a partition parked by `_retry_later`; a lost assignment is a no-op.
+
+        This runs as a `call_later` callback, which means it executes outside any task and
+        outside `handle_message`'s handlers: there is no caller for an exception to propagate
+        to. Anything not caught here goes to the loop's DEFAULT exception handler, which
+        writes to the `asyncio` logger — not through the structlog JSON pipeline — and by then
+        the handle has already been popped from `_resume_handles`, so nothing would ever try
+        to resume this partition again. The service stays up, `getone()` blocks forever, and
+        the only trace is a line the log pipeline does not format. That is why the catch is
+        broad (WR-06): `SubscriptionState._assigned_state` asserts on `self._subscription is
+        not None` and on the assignment, both reachable during a stop/rebalance race, and an
+        `AssertionError` is not a `KafkaError`.
+
+        A failed resume is RE-SCHEDULED rather than dropped, so a transient race does not
+        park the partition permanently — but only a bounded number of times, because an
+        unbounded self-rescheduling timer against a consumer that is genuinely gone is a log
+        flood that never ends. On exhaustion it says so, loudly and once.
+        """
         self._resume_handles.pop(topic_partition, None)
         try:
             self.consumer.resume(topic_partition)
         except KafkaError:
             # Reassigned elsewhere while we were paused; nothing left to resume.
             return
+        except Exception as exc:  # noqa: BLE001 — a callback has no caller to raise to
+            log.error(
+                "partition_resume_failed",
+                topic=topic_partition.topic,
+                partition=topic_partition.partition,
+                attempt=attempt,
+                max_attempts=MAX_RESUME_ATTEMPTS,
+                error=_failure_shape(exc),
+            )
+            if attempt >= MAX_RESUME_ATTEMPTS:
+                log.error(
+                    "partition_resume_abandoned",
+                    topic=topic_partition.topic,
+                    partition=topic_partition.partition,
+                    attempts=attempt,
+                    metric=METRIC_PARTITION_RESUME_ABANDONED,
+                )
+                return
+            self._resume_handles[topic_partition] = asyncio.get_running_loop().call_later(
+                TRANSIENT_RETRY_BACKOFF_SECONDS,
+                self._resume_partition,
+                topic_partition,
+                attempt + 1,
+            )
 
     async def _handle_raw(self, msg: Any) -> None:
         raw = AvailabilityRaw.model_validate_json(msg.value)
