@@ -59,7 +59,7 @@ Two rules keep this honest:
       +--> Expedite: ZADD sched:polls XX LT (poll_time + 8000)
       |
       +--> Emit, per slot, in this order and no other:
-      |       1. SET event:{rid}:{date}:{party}:{token} 1 NX EX 1200   <- Layer-1 claim, one command
+      |       1. SET event:{rid}:{date}:{party}:{slot_key}:{token} 1 NX EX 1200  <- Layer-1 claim
       |       2. producer.send_and_wait("availability.events", ...)    <- acks=all, never a bare send
       |       3. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write
       |       4. INSERT ... ON CONFLICT (event_id, "time") DO NOTHING  <- best effort
@@ -104,8 +104,16 @@ here (D-42).
 |-----|------|-----|----------|
 | `avail:{rid}:{date}:{party}` | HASH | 90000 s (25 h) | field = `{time_slot}\|{seat_type or '-'}`, value = compact JSON slot record |
 | `avail:{rid}:meta` | HASH | 90000 s | `unknown_since_ms`, `last_success_ms` |
-| `event:{rid}:{date}:{party}:{token}` | STRING | 1200 s | the Layer-1 emission claim |
+| `event:{rid}:{date}:{party}:{slot_key}:{token}` | STRING | 1200 s | the Layer-1 emission claim, one key per slot identity |
 | `sched:expedite:{source}:{rid}` | STRING | 120 s | set when the job is in flight; the poller consumes it with `GETDEL` |
+
+The claim key includes the **slot key**, not just the booking token. `seat_type` is part of
+slot identity (D-36) and OpenTable gives every seating type of one timeslot the *same*
+`token`, so a token-only claim key would collapse two distinct slots onto one key: the second
+slot's `SET NX` would fail, its confirmed event would be skipped rather than re-sent, and the
+opening would be lost. `scripts/replay_raw.py` uses no claim key at all, so a token-only key
+also made production and replay disagree on the same input — a STATE-06 violation. The
+regression guard is `tests/unit/test_two_seat_types_one_token.py`.
 
 The TTL is **key-level and refreshed on every write**, deliberately. Per-field hash TTL
 (`HEXPIRE`) is a Redis 7.4 *server* feature; redis-py 7.4.0 has the client method, so using it

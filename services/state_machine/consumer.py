@@ -196,8 +196,16 @@ class StateMachineConsumer:
     async def _apply_emit(self, decision: Emit) -> None:
         """One confirmed emission, executed in the D-46 order: claim, send, record, persist."""
         event = decision.event
+        # The claim key carries the SLOT KEY as well as the token (D-36, D-46 as amended by
+        # CR-01): OpenTable gives every seating type of one timeslot the same booking token,
+        # so a token-only key would make two distinct slots claim the same key and the second
+        # confirmed opening would be dropped, never retried.
         claim_key = event_idempotency_key(
-            event.restaurant_id, decision.date, decision.party_size, decision.idempotency_token
+            event.restaurant_id,
+            decision.date,
+            decision.party_size,
+            decision.slot_key,
+            decision.idempotency_token,
         )
         claimed = await set_nx_ex(self.r, claim_key, "1", EVENT_IDEMPOTENCY_TTL_SECONDS)
         _maybe_crash("nx_claim")

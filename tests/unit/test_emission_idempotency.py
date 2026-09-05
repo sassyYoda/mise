@@ -108,7 +108,7 @@ async def test_the_claim_is_one_atomic_set_nx_ex_call(monkeypatch):
     await shell._apply_emit(_emit())
 
     redis_client.set.assert_called_once_with(
-        event_idempotency_key(RID, DATE, PARTY, TOKEN),
+        event_idempotency_key(RID, DATE, PARTY, SLOT_KEY, TOKEN),
         "1",
         nx=True,
         ex=EVENT_IDEMPOTENCY_TTL_SECONDS,

@@ -80,7 +80,10 @@ def test_avail_meta_key_format():
 
 
 def test_event_idempotency_key_format():
-    assert event_idempotency_key(42, "2026-05-01", 2, "tok1") == "event:42:2026-05-01:2:tok1"
+    assert (
+        event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "tok1")
+        == "event:42:2026-05-01:2:19:00|bar:tok1"
+    )
 
 
 def test_availability_ttl_constants():
@@ -96,8 +99,22 @@ def test_adjacent_party_sizes_never_collide():
 
 
 def test_idempotency_keys_differing_only_in_token_are_distinct():
-    a = event_idempotency_key(42, "2026-05-01", 2, "tok1")
-    b = event_idempotency_key(42, "2026-05-01", 2, "tok2")
+    a = event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "tok1")
+    b = event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "tok2")
+    assert a != b
+
+
+def test_idempotency_keys_differing_only_in_seat_type_are_distinct():
+    """CR-01 regression: seat_type is slot identity (D-36) and OpenTable shares one token
+    across every seating type of a timeslot, so the claim key MUST separate them."""
+    bar = event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "shared-token")
+    standard = event_idempotency_key(42, "2026-05-01", 2, "19:00|standard", "shared-token")
+    assert bar != standard
+
+
+def test_idempotency_keys_differing_only_in_time_slot_are_distinct():
+    a = event_idempotency_key(42, "2026-05-01", 2, "19:00|bar", "shared-token")
+    b = event_idempotency_key(42, "2026-05-01", 2, "20:00|bar", "shared-token")
     assert a != b
 
 
@@ -105,7 +122,7 @@ def test_key_builders_are_total_and_touch_no_redis():
     """Empty edge (STATE-01): pure string builders, no IO, no failure mode."""
     assert avail_state_key(0, "", 0) == "avail:0::0"
     assert avail_meta_key(0) == "avail:0:meta"
-    assert event_idempotency_key(0, "", 0, "") == "event:0::0:"
+    assert event_idempotency_key(0, "", 0, "", "") == "event:0::0::"
 
 
 def test_hash_helpers_are_exported_so_store_needs_no_casts():

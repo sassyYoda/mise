@@ -60,9 +60,20 @@ def avail_meta_key(restaurant_id: int) -> str:
     return f"avail:{restaurant_id}:meta"
 
 
-def event_idempotency_key(restaurant_id: int, date: str, party_size: int, token: str) -> str:
-    """Return the SET NX EX claim key for one emitted event (D-46, STATE-04)."""
-    return f"event:{restaurant_id}:{date}:{party_size}:{token}"
+def event_idempotency_key(
+    restaurant_id: int, date: str, party_size: int, slot_key: str, token: str
+) -> str:
+    """
+    Return the SET NX EX claim key for one emitted event (D-46, STATE-04).
+
+    `slot_key` is MANDATORY and is what makes the claim unique per slot identity. D-36 puts
+    `seat_type` inside slot identity while `booking_token` is only data, and OpenTable fans one
+    timeslot out into one slot per seating type carrying the SAME token — so a claim keyed on
+    `(rid, date, party, token)` alone collapses two distinct slots onto one key and silently
+    drops the second confirmed opening. The token stays in the key (it distinguishes a rotated
+    token within one slot cycle) but it can no longer be the only discriminator.
+    """
+    return f"event:{restaurant_id}:{date}:{party_size}:{slot_key}:{token}"
 
 
 # -- Typed HASH helpers (D-42, research Pitfall 3) --
