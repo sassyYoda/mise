@@ -249,9 +249,18 @@ def test_the_env_example_documents_the_confirmation_window_and_the_crash_hook() 
     MISE_CRASH_AFTER may only appear alongside a TEST ONLY banner (research T-02-04): an
     operator who copies .env.example into a deployed environment must not silently arm a
     hook whose entire job is to SIGKILL the service.
+
+    The confirmation window is documented in the same block, but as a NOTE rather than an
+    assignment: no code reads `CONFIRM_DELAY_MS` from the environment (WR-06), and the replay
+    goldens are only goldens because the window cannot be changed from a shell. The stricter
+    form of this assertion lives in tests/unit/test_confirm_delay_is_not_configurable.py.
     """
-    lines = (REPO_ROOT / ".env.example").read_text().splitlines()
-    assert "CONFIRM_DELAY_MS=8000" in lines
+    text = (REPO_ROOT / ".env.example").read_text()
+    lines = text.splitlines()
+    assert "CONFIRM_DELAY_MS" in text, "the window must still be explained to an operator"
+    assert "CONFIRM_DELAY_MS=8000" not in lines, (
+        "a variable no code reads must not be documented as settable"
+    )
 
     crash_index = lines.index("MISE_CRASH_AFTER=")
     banner = "\n".join(lines[max(0, crash_index - 4) : crash_index])
