@@ -171,8 +171,12 @@ async def test_downgrade_then_upgrade_restores_the_same_schema(db_urls):
     membership varies with collection order.
     """
     env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
+    # An ABSOLUTE revision, not `-1`. `-1` means "one step back from head", and head moved
+    # to 0009 in plan 03-03 — so `-1` silently started meaning 0009 -> 0008, leaving
+    # `event_id` in place and failing this test for a reason that has nothing to do with
+    # what it asserts. The revision this test is about is 0008; the one below it is 0007.
     result = subprocess.run(
-        ["uv", "run", "alembic", "downgrade", "-1"],
+        ["uv", "run", "alembic", "downgrade", "0007"],
         env=env, capture_output=True, text=True,
     )
     assert result.returncode == 0, f"downgrade failed: {result.stderr}"
@@ -218,8 +222,10 @@ async def test_a_non_empty_table_is_refused_not_deleted(db_urls):
     env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
     legacy_time = datetime(2026, 5, 3, 23, 0, tzinfo=UTC)
 
+    # Absolute revision — see the comment in the test above: `-1` stopped meaning 0007
+    # the moment migration 0009 became head.
     downgraded = subprocess.run(
-        ["uv", "run", "alembic", "downgrade", "-1"],
+        ["uv", "run", "alembic", "downgrade", "0007"],
         env=env, capture_output=True, text=True,
     )
     assert downgraded.returncode == 0, f"downgrade failed: {downgraded.stderr}"

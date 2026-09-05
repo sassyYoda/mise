@@ -14,7 +14,7 @@ TimescaleDB container, that the three hard failures research reproduced are gone
 It also carries the standing guard for T-03-12: 0009 refuses to run against a duplicate
 `(slug, source)` pair rather than deleting a row to force the constraint through.
 
-Test order in this file is load-bearing. The `alembic downgrade -1` tests restore
+Test order in this file is load-bearing. The `alembic downgrade` tests restore
 `UNIQUE(slug)`, which fails outright once two rows share a slug, so every test that
 creates a shared slug either cleans up after itself or runs after the downgrade tests.
 """
@@ -50,6 +50,12 @@ def migrated(db_urls: dict[str, str]) -> dict[str, str]:
     """Apply every migration, including 0009, against the module's container."""
     apply_migrations({**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]})
     return db_urls
+
+
+# The revision BELOW the one under test, named absolutely. Never `downgrade -1`: that
+# means "one step back from head", so it silently retargets the moment a 0010 lands —
+# exactly how migration 0009 broke two passing tests in test_migration_0008.py.
+PREVIOUS_REVISION = "0008"
 
 
 def _alembic(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
@@ -193,7 +199,7 @@ async def test_0009_applies_over_a_populated_0008_database(db_urls):
     A migration that only works on an empty database is a migration nobody can run.
     """
     env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
-    down = _alembic(env, "downgrade", "-1")
+    down = _alembic(env, "downgrade", PREVIOUS_REVISION)
     assert down.returncode == 0, f"downgrade failed: {down.stderr}"
 
     try:
@@ -242,7 +248,7 @@ async def test_the_preflight_guard_refuses_a_duplicate_rather_than_deleting_it(d
     migration manually — and it is exactly where a silent `DELETE` would be unrecoverable.
     """
     env = {**os.environ, "DATABASE_URL_SYNC": db_urls["sync"]}
-    down = _alembic(env, "downgrade", "-1")
+    down = _alembic(env, "downgrade", PREVIOUS_REVISION)
     assert down.returncode == 0, f"downgrade failed: {down.stderr}"
 
     try:
