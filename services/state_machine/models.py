@@ -3,7 +3,7 @@ Value types shared by the parsers, the diff engine and the consumer shell (D-36,
 Pure data only: this module performs no I/O, reads no clock and draws no entropy, so the
 engine that imports it stays replay-deterministic (D-49).
 Named symbols: SlotState, Slot, ParsedPoll, SlotRecord, MetaRecord, Expedite, Emit, Close,
-Decision, DEFAULT_CONFIRM_DELAY_MS
+Decision
 """
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ from uuid import UUID
 
 from shared.events import AvailabilityEvent
 
-# Confirmation delay (D-44). Declared here rather than imported from shared/redis_keys.py so
-# this package has no import edge into a module other wave-1 plans are editing concurrently.
-DEFAULT_CONFIRM_DELAY_MS: int = 8_000
+# The confirmation delay is NOT declared here. It used to be, as a second literal alongside
+# shared.redis_keys.CONFIRM_DELAY_MS, to dodge an import edge that no longer conflicts — and
+# the two agreed only by coincidence. Production read one and replay defaulted to the other,
+# so changing either would have left every golden file and the byte-identity test asserting a
+# confirmation window production no longer used. There is now exactly one:
+# shared.redis_keys.CONFIRM_DELAY_MS (D-42, D-43).
 
 
 class SlotState(StrEnum):

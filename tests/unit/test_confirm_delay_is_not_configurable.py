@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from shared.redis_keys import CONFIRM_DELAY_MS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCANNED_DIRS = ("services", "shared", "scripts")
 
@@ -52,3 +54,19 @@ def test_env_example_does_not_advertise_confirm_delay_ms_as_a_variable() -> None
         if not line.lstrip().startswith("#") and line.split("=", 1)[0].strip() == "CONFIRM_DELAY_MS"
     ]
     assert assignments == [], f".env.example still declares {assignments}"
+def test_there_is_exactly_one_confirmation_delay_constant() -> None:
+    """WR-07: replay and production must not be able to drift apart."""
+    import services.state_machine.models as models
+
+    assert not hasattr(models, "DEFAULT_CONFIRM_DELAY_MS"), (
+        "a second confirm-delay literal is back; replay and production can now silently "
+        "disagree and every golden file would assert a window production no longer uses"
+    )
+    assert CONFIRM_DELAY_MS == 8_000
+
+
+def test_replay_uses_the_production_constant() -> None:
+    """The golden files and the wire must be produced with the same window."""
+    import scripts.replay_raw as replay_raw
+
+    assert replay_raw.CONFIRM_DELAY_MS is CONFIRM_DELAY_MS

@@ -44,10 +44,11 @@ from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 
 from services.state_machine.engine import DiffEngine
-from services.state_machine.models import DEFAULT_CONFIRM_DELAY_MS, Decision, Emit
+from services.state_machine.models import Decision, Emit
 from services.state_machine.parsers import ParseError, parse_raw
 from services.state_machine.store import MemoryStateStore
 from shared.events import AvailabilityRaw, PollCompleted
+from shared.redis_keys import CONFIRM_DELAY_MS
 
 # Topic names (D-27, D-45). Kept as literals rather than imported from the consumer module:
 # importing that module would drag SQLAlchemy, a Kafka consumer group and a Redis client into
@@ -111,14 +112,16 @@ async def _handle_completed(engine: DiffEngine, value: Any) -> None:
 
 async def replay(
     envelopes: Iterable[Envelope],
-    confirm_delay_ms: int = DEFAULT_CONFIRM_DELAY_MS,
+    confirm_delay_ms: int = CONFIRM_DELAY_MS,
 ) -> list[str]:
     """
     Feed a stream of tagged envelopes through the production diff engine and return one output
     line per distinct emitted event, WITHOUT the trailing newline.
 
-    `confirm_delay_ms` defaults to the compiled-in constant rather than an environment read: a
-    golden file that depended on CONFIRM_DELAY_MS in the caller's shell would not be a golden.
+    `confirm_delay_ms` defaults to `shared.redis_keys.CONFIRM_DELAY_MS` — the SAME constant
+    production compiles in, not a replay-local copy of its value — and never to an environment
+    read: a golden file that depended on the caller's shell would not be a golden, and a second
+    literal would let replay and production drift apart silently (WR-07).
 
     Events are de-duplicated by `event_id`, so a range that overlaps a prior emission still
     yields one line per distinct event (D-50). Serialisation is `AvailabilityEvent.to_bytes()`
@@ -185,7 +188,7 @@ def write_lines(lines: Sequence[str], output_path: Path | None) -> None:
 async def run_input_mode(
     input_path: Path,
     output_path: Path | None,
-    confirm_delay_ms: int = DEFAULT_CONFIRM_DELAY_MS,
+    confirm_delay_ms: int = CONFIRM_DELAY_MS,
 ) -> int:
     """Replay a jsonl fixture. An empty input is a successful empty replay, never an error."""
     lines = await replay(read_envelopes(input_path), confirm_delay_ms)
@@ -276,7 +279,7 @@ async def run_offset_mode(
     from_offset: int,
     to_offset: int | None,
     output_path: Path | None,
-    confirm_delay_ms: int = DEFAULT_CONFIRM_DELAY_MS,
+    confirm_delay_ms: int = CONFIRM_DELAY_MS,
 ) -> int:
     """
     Replay a bounded Kafka offset range through the same engine `--input` mode uses.

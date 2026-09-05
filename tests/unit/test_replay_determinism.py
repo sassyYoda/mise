@@ -151,14 +151,41 @@ def test_input_mode_never_reaches_the_persistence_or_consumer_layer() -> None:
 
 def test_the_script_declares_no_second_serializer_and_no_production_client() -> None:
     """
-    Import-line-scoped source gate. Byte-identity is only meaningful while the replay writer
-    and the producer share one serializer (Pitfall 7), and read-only-ness is only structural
-    while the script cannot open a Redis or Postgres connection at all.
+    Import-scoped source gate. Byte-identity is only meaningful while the replay writer and the
+    producer share one serializer (Pitfall 7), and read-only-ness is only structural while the
+    script cannot open a Redis or Postgres connection at all.
+
+    The ban is on the imported MODULE, resolved from the AST, not on the substring "redis"
+    appearing anywhere in an import line. `shared.redis_keys` is a pure constants-and-helpers
+    module — it holds the single `CONFIRM_DELAY_MS` literal replay must share with production
+    (WR-07) and imports the redis client only under `TYPE_CHECKING` — so importing it opens
+    nothing. Importing `redis` itself still cannot happen, and neither can constructing a
+    client by any other route: the second half of this gate names the constructors.
     """
     source = (REPO_ROOT / "scripts" / "replay_raw.py").read_text()
-    import_lines = [ln for ln in source.splitlines() if ln.startswith(("import ", "from "))]
-    for banned in ("redis", "sqlalchemy", "orjson", "services.state_machine.consumer"):
-        assert not [ln for ln in import_lines if banned in ln], f"replay must not import {banned}"
+    tree = ast.parse(source)
+
+    imported_roots: set[str] = set()
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add(alias.name)
+                imported_roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module)
+            imported_roots.add(node.module.split(".")[0])
+
+    for banned in ("redis", "sqlalchemy", "asyncpg", "psycopg"):
+        assert banned not in imported_roots, f"replay must not import the {banned} client"
+    assert "orjson" not in imported_roots, "replay must not declare a second serializer"
+    assert "services.state_machine.consumer" not in imported_modules, (
+        "replay must not import the production shell"
+    )
+
+    # No client may be constructed by any other route either.
+    for constructor in ("from_url", "create_async_engine", "AIOKafkaProducer", "get_engine"):
+        assert constructor not in source, f"replay must not construct {constructor}"
 
     # Match the AST, not the text: the script's own docstrings explain WHY exclude_none is
     # forbidden, and a text gate would be tripped by the explanation it exists to motivate
