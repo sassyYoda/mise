@@ -25,7 +25,8 @@ async def make_producer(bootstrap_servers: str | None = None) -> AIOKafkaProduce
         bootstrap_servers=servers,
         acks="all",                                   # D-02: wait for all in-sync replicas
         enable_idempotence=True,                      # prevents duplicates on retry
-        max_in_flight_requests_per_connection=5,      # required with idempotence=True
+        # NOTE: aiokafka has no max_in_flight_requests_per_connection kwarg; it
+        # enforces the idempotence-safe in-flight limit internally.
         compression_type="gzip",                      # cheap at ~10KB messages
         linger_ms=20,                                  # small batching window
         request_timeout_ms=30_000,

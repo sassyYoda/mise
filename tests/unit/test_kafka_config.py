@@ -18,7 +18,8 @@ async def test_make_producer_config():
         assert call_kwargs["enable_idempotence"] is True
         assert call_kwargs["compression_type"] == "gzip"
         assert call_kwargs["linger_ms"] == 20
-        assert call_kwargs["max_in_flight_requests_per_connection"] == 5
+        # aiokafka 0.13 rejects this kafka-python-only kwarg at construction time.
+        assert "max_in_flight_requests_per_connection" not in call_kwargs
         assert call_kwargs["bootstrap_servers"] == "localhost:9094"
 
 
