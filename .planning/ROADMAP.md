@@ -129,7 +129,17 @@ Plans:
   4. STOP keyword on inbound Twilio webhook and one-click email unsubscribe link (HMAC-signed) both flip the watch to inactive within 5 seconds end-to-end, verified against a live US phone number.
   5. Deep links in all three channels (email, SMS, Web Push) route through `mise.place/go/[token]` and land on the correct Resy/OpenTable booking slot with date, party size, and time pre-filled; false-positive rate (slot_still_available=false / total sent) is < 2% daily (PERF-03).
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 04-01-shared-token-crypto-kernel-PLAN.md — wave 1: HMAC capability tokens, platform deep links, AES-256-GCM phone crypto, the Twilio/Svix signature verifiers, and the shared crash hook
+- [ ] 04-02-events-redis-schema-kernel-PLAN.md — wave 1: `NotificationQueued`/`NotificationSent`, the Layer-2 claim key and daily-cap Lua, migration 0010, and the `notifications.dlq` topic
+- [ ] 04-03-notifier-fanout-core-PLAN.md — wave 2: notifier config, the pure watch matcher, persistence, and the manual-commit fan-out consumer
+- [ ] 04-04-api-links-webhooks-PLAN.md — wave 2: the FastAPI skeleton with `/go`, `/unsubscribe`, and the Twilio and Resend webhooks
+- [ ] 04-05-templates-providers-PLAN.md — wave 3: message templates on the GSM-7 budget plus the email, SMS and Web Push providers over httpx
+- [ ] 04-06-delivery-workers-chaos-PLAN.md — wave 4: the delivery worker, the service entrypoint, and the SIGKILL chaos proof of SC2
+- [ ] 04-07-measurement-runbooks-docs-PLAN.md — wave 5: the PERF-01 and PERF-03 gates, Make targets, env block, and the two pending-human runbooks
+
 **UI hint**: no
 
 ### Phase 5: API, Watchlist CRUD & SSE
