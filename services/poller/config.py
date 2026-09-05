@@ -1,8 +1,21 @@
-"""Poller service configuration (D-17, D-19, T-03).
+"""Poller service configuration (D-17, D-19, T-03, D-63).
 
 Single source of truth for poll scheduling constants is `shared.redis_keys`;
 this module re-exports the relevant names so downstream poller code has one
 import path for config.
+
+Every Resy setting below is read through a FUNCTION, never a module constant, and that is
+deliberate. The module constants further down (KAFKA_BOOTSTRAP_SERVERS, REDIS_URL,
+DATABASE_URL_ASYNC) freeze the environment at IMPORT time, so any integration test that
+imports the poller during collection pins the whole run to the localhost defaults instead of
+its testcontainers (the 02-02 deviation; `tests/integration/test_poller_expedite_release.py`
+carries an explicit sys.modules eviction to work around it). Reading lazily means a
+`monkeypatch.setenv` in one test cannot outlive that test, and `RESY_ENABLED` cannot be
+frozen `false` by whichever module happened to import first.
+
+The legacy constants are left exactly as they are: other modules import them and this plan
+owns none of those call sites. `tests/unit/test_resy_config_lazy.py` scans this file and
+fails if a NEW module-level `os.getenv` assignment appears.
 """
 from __future__ import annotations
 
@@ -14,6 +27,45 @@ from shared.redis_keys import (  # noqa: F401 (re-exported for consumers)
     POLL_INTERVAL_SECONDS,
     POLL_JITTER_FRACTION,
 )
+
+# `__all__` makes the re-exports explicit for mypy --strict, which otherwise refuses to let
+# another module import POLL_INTERVAL_SECONDS / POLL_JITTER_FRACTION from here.
+__all__ = [
+    "DATABASE_URL_ASYNC",
+    "DEFAULT_DATE_RANGE_DAYS",
+    "DEFAULT_PARTY_SIZES",
+    "KAFKA_BOOTSTRAP_SERVERS",
+    "POLL_INTERVAL_SECONDS",
+    "POLL_JITTER_FRACTION",
+    "REDIS_URL",
+    "USER_AGENTS",
+    "random_user_agent",
+    "resy_enabled",
+]
+
+# Values a human writes into an .env file meaning "off". Anything not in this set and not
+# empty is true, so a typo fails OPEN into the safe direction only for the flag whose
+# default is already false: RESY_ENABLED must be set deliberately to launch Chromium.
+_FALSEY: frozenset[str] = frozenset({"", "false", "0", "no", "off"})
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    """Read a boolean env var. Unset/empty is `default`; `_FALSEY` members are False."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in _FALSEY
+
+
+def resy_enabled() -> bool:
+    """
+    The single switch that keeps an unconfigured deployment from ever launching Chromium.
+
+    False by default (D-63). While it is false the seed creates no `resy` restaurants row
+    and enqueues no `resy:{venue_id}` job, so `poll_loop` never dispatches to the Resy
+    adapter and the browser is never started.
+    """
+    return _env_bool("RESY_ENABLED", default=False)
 
 # Date and party size defaults for OpenTable polling (D-19)
 DEFAULT_DATE_RANGE_DAYS: int = 7

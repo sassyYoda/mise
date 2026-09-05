@@ -54,7 +54,10 @@ class Restaurant(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)          # 'opentable' | 'resy'
     platform_id: Mapped[str] = mapped_column(Text, nullable=False)     # stringified OT rid or Resy venue_id
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # NOT unique on its own since migration 0009 (D-63b): a slug identifies a
+    # RESTAURANT, not a row, so one logical restaurant holds one row per source under
+    # one slug. Uniqueness is the composite (slug, source) in __table_args__ below.
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
     neighborhood: Mapped[str] = mapped_column(Text, nullable=False)
     cuisine: Mapped[str] = mapped_column(Text, nullable=False)
     price_tier: Mapped[int] = mapped_column(Integer, nullable=False)   # CHECK 1..4 enforced in migration
@@ -66,6 +69,9 @@ class Restaurant(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     __table_args__ = (
         UniqueConstraint("source", "platform_id", name="uq_restaurants_source_platform_id"),
+        # Migration 0009 (D-63b). The upsert and join key is still (source, platform_id)
+        # (D-52); this constraint only stops the SAME source claiming one slug twice.
+        UniqueConstraint("slug", "source", name="uq_restaurants_slug_source"),
     )
 
 

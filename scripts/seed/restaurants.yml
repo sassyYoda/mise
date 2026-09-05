@@ -15,8 +15,21 @@
 #   Every entry MUST have all seven keys non-null:
 #     name, slug, neighborhood, cuisine, price_tier (1-4),
 #     cover_photo_url, opentable_rid
-#   resy_venue_id is OPTIONAL (string or null) — only populated when the
-#   restaurant is also on Resy.
+#   Two OPTIONAL Resy keys, and they are NOT interchangeable (D-63a, research B-4):
+#     resy_url_slug  — string or absent. The human URL slug from a resy.com address
+#                      (https://resy.com/cities/ny/<slug>). Present on the 31 entries
+#                      that are also on Resy. It is documentation and resolver input;
+#                      it is NEVER a job id.
+#     resy_venue_id  — INTEGER or null, present on all 55 entries, null on all 55
+#                      today. Resy's /4/find takes a NUMERIC venue_id, and the poller
+#                      builds its job descriptor as `resy:{resy_venue_id}` and parses
+#                      it back with int(). A slug here is an unrecoverable poison job:
+#                      int('carbone-new-york-new-york') raises, the poller logs
+#                      `invalid_restaurant_id` and `continue`s WITHOUT releasing the
+#                      job, and it re-enters the queue forever via the reaper.
+#   The seed creates a Resy row and enqueues a Resy poll ONLY when resy_venue_id is a
+#   real integer AND RESY_ENABLED=true, so a null id is visibly absent from the queue
+#   rather than silently polled against a fabricated venue.
 #
 # PLACEHOLDER WARNING (opentable_rid + cover_photo_url):
 #   Both fields are populated with placeholder values so the acceptance test
@@ -32,6 +45,25 @@
 #   (OpenTable RIDs are historically 5-7 digit integers).
 #   Placeholder cover_photo_url values all start with
 #   `https://placeholder.mise.place/` so a grep is trivial.
+#
+# PLACEHOLDER WARNING (resy_venue_id) — deliberately null, NOT a fake integer:
+#   Unlike opentable_rid, no placeholder integer is minted here. A fabricated Resy
+#   venue_id in the 800_000_000+ range would still be a syntactically valid job, so
+#   the fleet would poll it — against whatever real venue happens to hold that id, or
+#   against nothing, with no signal that the data was invented (D-63a, T-03-10).
+#   Null is the honest value and the seed skips it.
+#
+#   Resolution procedure (HUMAN-GATED — needs a real RESY_API_KEY):
+#     1. Capture RESY_API_KEY per docs/runbooks/resy-cookie-capture.md
+#        (Chrome DevTools -> Network -> any resy.com request -> the
+#        `Authorization: ResyAPI api_key="..."` request header).
+#     2. Dry run, no network, no writes:
+#          uv run python scripts/resolve_resy_venue_ids.py --dry-run
+#     3. Resolve for real (writes the integers back into this file, in place,
+#        preserving these comment blocks):
+#          RESY_API_KEY=... uv run python scripts/resolve_resy_venue_ids.py
+#     4. Re-run `make seed` with RESY_ENABLED=true to create the Resy rows and jobs.
+#   Until step 3 has run, every resy_venue_id below stays null and no Resy poll exists.
 #
 # Geographic diversity check (D-14): SoHo, Tribeca, West Village,
 # Greenwich Village, East Village, LES, NoLita, NoHo, Chelsea, Flatiron,
@@ -52,7 +84,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/carbone.jpg"  # TODO(01-05 spike): replace with real OT photo URL
     opentable_rid: 900000001  # TODO(01-05 spike): replace with live rid from OpenTable DevTools
-    resy_venue_id: "carbone-new-york-new-york"
+    resy_url_slug: "carbone-new-york-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Lilia"
     slug: "lilia-williamsburg"
@@ -61,7 +94,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/lilia.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000002  # TODO(01-05 spike)
-    resy_venue_id: "lilia-brooklyn"
+    resy_url_slug: "lilia-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Don Angie"
     slug: "don-angie"
@@ -70,7 +104,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/don-angie.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000003  # TODO(01-05 spike)
-    resy_venue_id: "don-angie-new-york"
+    resy_url_slug: "don-angie-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Rezdora"
     slug: "rezdora"
@@ -79,7 +114,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/rezdora.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000004  # TODO(01-05 spike)
-    resy_venue_id: "rezdora-new-york"
+    resy_url_slug: "rezdora-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Via Carota"
     slug: "via-carota"
@@ -88,7 +124,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/via-carota.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000005  # TODO(01-05 spike)
-    resy_venue_id: "via-carota-new-york"
+    resy_url_slug: "via-carota-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Misi"
     slug: "misi"
@@ -97,7 +134,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/misi.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000006  # TODO(01-05 spike)
-    resy_venue_id: "misi-brooklyn"
+    resy_url_slug: "misi-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "I Sodi"
     slug: "i-sodi"
@@ -106,7 +144,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/i-sodi.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000007  # TODO(01-05 spike)
-    resy_venue_id: "i-sodi-new-york"
+    resy_url_slug: "i-sodi-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "L'Artusi"
     slug: "lartusi"
@@ -115,7 +154,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/lartusi.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000008  # TODO(01-05 spike)
-    resy_venue_id: "lartusi-new-york"
+    resy_url_slug: "lartusi-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Roberta's"
     slug: "robertas-bushwick"
@@ -124,7 +164,8 @@ restaurants:
     price_tier: 2
     cover_photo_url: "https://placeholder.mise.place/robertas.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000009  # TODO(01-05 spike)
-    resy_venue_id: "robertas-brooklyn"
+    resy_url_slug: "robertas-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   # --- Japanese (sushi, omakase, izakaya, ramen) -----------------------------
   - name: "Sushi Noz"
@@ -134,7 +175,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/sushi-noz.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000010  # TODO(01-05 spike)
-    resy_venue_id: "sushi-noz-new-york"
+    resy_url_slug: "sushi-noz-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Masa"
     slug: "masa"
@@ -152,7 +194,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/shukette.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000012  # TODO(01-05 spike)
-    resy_venue_id: "shukette-new-york"
+    resy_url_slug: "shukette-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Torien"
     slug: "torien"
@@ -161,7 +204,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/torien.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000013  # TODO(01-05 spike)
-    resy_venue_id: "torien-new-york"
+    resy_url_slug: "torien-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Kissaki"
     slug: "kissaki-omakase"
@@ -170,7 +214,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/kissaki.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000014  # TODO(01-05 spike)
-    resy_venue_id: "kissaki-bowery"
+    resy_url_slug: "kissaki-bowery"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Morimoto"
     slug: "morimoto-nyc"
@@ -207,7 +252,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/frenchette.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000018  # TODO(01-05 spike)
-    resy_venue_id: "frenchette-new-york"
+    resy_url_slug: "frenchette-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Le Coucou"
     slug: "le-coucou"
@@ -216,7 +262,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/le-coucou.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000019  # TODO(01-05 spike)
-    resy_venue_id: "le-coucou-new-york"
+    resy_url_slug: "le-coucou-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Balthazar"
     slug: "balthazar"
@@ -244,7 +291,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/emp.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000022  # TODO(01-05 spike)
-    resy_venue_id: "eleven-madison-park-new-york"
+    resy_url_slug: "eleven-madison-park-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Per Se"
     slug: "per-se"
@@ -271,7 +319,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/estela.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000025  # TODO(01-05 spike)
-    resy_venue_id: "estela-new-york"
+    resy_url_slug: "estela-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Blue Hill"
     slug: "blue-hill-nyc"
@@ -289,7 +338,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/four-horsemen.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000027  # TODO(01-05 spike)
-    resy_venue_id: "the-four-horsemen-brooklyn"
+    resy_url_slug: "the-four-horsemen-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Atomix"
     slug: "atomix"
@@ -298,7 +348,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/atomix.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000028  # TODO(01-05 spike)
-    resy_venue_id: "atomix-new-york"
+    resy_url_slug: "atomix-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   # --- Seafood + Steakhouse --------------------------------------------------
   - name: "Peter Luger"
@@ -326,7 +377,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/the-grill.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000031  # TODO(01-05 spike)
-    resy_venue_id: "the-grill-new-york"
+    resy_url_slug: "the-grill-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Mermaid Inn"
     slug: "mermaid-inn-east-village"
@@ -345,7 +397,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/cosme.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000033  # TODO(01-05 spike)
-    resy_venue_id: "cosme-new-york"
+    resy_url_slug: "cosme-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Atla"
     slug: "atla"
@@ -354,7 +407,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/atla.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000034  # TODO(01-05 spike)
-    resy_venue_id: "atla-new-york"
+    resy_url_slug: "atla-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Claro"
     slug: "claro-gowanus"
@@ -363,7 +417,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/claro.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000035  # TODO(01-05 spike)
-    resy_venue_id: "claro-brooklyn"
+    resy_url_slug: "claro-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   # --- Korean + Thai + Chinese ----------------------------------------------
   - name: "Cote"
@@ -373,7 +428,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/cote.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000036  # TODO(01-05 spike)
-    resy_venue_id: "cote-new-york"
+    resy_url_slug: "cote-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Jua"
     slug: "jua"
@@ -382,7 +438,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/jua.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000037  # TODO(01-05 spike)
-    resy_venue_id: "jua-new-york"
+    resy_url_slug: "jua-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Thai Diner"
     slug: "thai-diner"
@@ -391,7 +448,8 @@ restaurants:
     price_tier: 2
     cover_photo_url: "https://placeholder.mise.place/thai-diner.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000038  # TODO(01-05 spike)
-    resy_venue_id: "thai-diner-new-york"
+    resy_url_slug: "thai-diner-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Uncle Boons"
     slug: "uncle-boons"
@@ -428,7 +486,8 @@ restaurants:
     price_tier: 4
     cover_photo_url: "https://placeholder.mise.place/semma.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000042  # TODO(01-05 spike)
-    resy_venue_id: "semma-new-york"
+    resy_url_slug: "semma-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Dhamaka"
     slug: "dhamaka"
@@ -437,7 +496,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/dhamaka.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000043  # TODO(01-05 spike)
-    resy_venue_id: "dhamaka-new-york"
+    resy_url_slug: "dhamaka-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   # --- Middle Eastern + Greek + Spanish -------------------------------------
   - name: "Shuka"
@@ -447,7 +507,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/shuka.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000044  # TODO(01-05 spike)
-    resy_venue_id: "shuka-new-york"
+    resy_url_slug: "shuka-new-york"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Miss Lily's"
     slug: "miss-lilys-7a"
@@ -512,7 +573,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/oxomoco.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000051  # TODO(01-05 spike)
-    resy_venue_id: "oxomoco-brooklyn"
+    resy_url_slug: "oxomoco-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Olmsted"
     slug: "olmsted-prospect-heights"
@@ -521,7 +583,8 @@ restaurants:
     price_tier: 3
     cover_photo_url: "https://placeholder.mise.place/olmsted.jpg"  # TODO(01-05 spike)
     opentable_rid: 900000052  # TODO(01-05 spike)
-    resy_venue_id: "olmsted-brooklyn"
+    resy_url_slug: "olmsted-brooklyn"
+    resy_venue_id: null  # TODO(03 spike): numeric venue_id from Resy DevTools — see docs/runbooks/resy-cookie-capture.md
 
   - name: "Convivium Osteria"
     slug: "convivium-osteria"
