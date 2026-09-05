@@ -113,6 +113,14 @@ class SlotRecord:
             # Raising here instead means `get_slots` drops the field with its existing
             # `slot_record_unreadable` warning and the slot re-enters the PENDING cycle, which
             # is the safe direction and the treatment every other corrupt field already gets.
+            #
+            # The isinstance check is CR-02 (iteration 3) and is what makes the boundary
+            # TOTAL. `UUID()` does not raise `ValueError` for a non-string: it raises
+            # `AttributeError` out of `hex.replace(...)`, so a stored `"e": 42` used to skip
+            # past `get_slots`'s except clause and reach the retry-forever branch — verbatim
+            # the outcome the paragraph above says this validation removed.
+            if not isinstance(event_id, str):
+                raise ValueError(f"event_id must be a string, got {type(event_id).__name__}")
             UUID(event_id)
         return cls(
             state=SlotState(raw["s"]),

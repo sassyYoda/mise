@@ -153,8 +153,8 @@ def test_an_unreadable_stored_state_is_rejected_rather_than_accepted() -> None:
 
 @pytest.mark.parametrize(
     "stored",
-    ['"not-a-uuid"', '"6f1b1c62-0000-4000-8000-00000000000"', '""', "42"],
-    ids=["garbage", "truncated", "empty", "number"],
+    ['"not-a-uuid"', '"6f1b1c62-0000-4000-8000-00000000000"', '""', "42", "true", '["a"]'],
+    ids=["garbage", "truncated", "empty", "number", "bool", "list"],
 )
 def test_an_unparseable_event_id_is_rejected_at_the_boundary(stored: str) -> None:
     """`_close` used to run `UUID(record.event_id)` inside the pure core.
@@ -169,7 +169,12 @@ def test_an_unparseable_event_id_is_rejected_at_the_boundary(stored: str) -> Non
         '{"s":"AVAILABLE","t":"tok","f":1,"p":"6f1b1c62-0000-4000-8000-000000000001",'
         f'"l":2,"c":2,"e":{stored}}}'
     )
-    with pytest.raises((ValueError, TypeError, AttributeError)):
+    # ValueError, not a permissive tuple. The tuple was how CR-02 (iteration 3) hid: the
+    # `number` case actually raised `AttributeError` out of `UUID()`'s `hex.replace(...)`,
+    # which `RedisStateStore.get_slots` did not catch, so that one case escaped the store
+    # while the test recorded it as covered. A single exception type is what proves the
+    # boundary is total.
+    with pytest.raises(ValueError):
         SlotRecord.from_json(payload)
 
 
@@ -183,19 +188,33 @@ def test_a_well_formed_event_id_still_round_trips() -> None:
     assert SlotRecord.from_json(payload).event_id == event_id
 
 
-def test_a_corrupt_event_id_is_dropped_by_the_store_not_raised() -> None:
-    """The end-to-end consequence: an unreadable record disappears, the poll survives."""
+@pytest.mark.parametrize(
+    "stored",
+    ['"not-a-uuid"', '"6f1b1c62-0000-4000-8000-00000000000"', '""', "42", "true", '["a"]'],
+    ids=["garbage", "truncated", "empty", "number", "bool", "list"],
+)
+def test_a_corrupt_event_id_is_dropped_by_the_store_not_raised(stored: str) -> None:
+    """The end-to-end consequence: an unreadable record disappears, the poll survives.
+
+    CR-02 (iteration 3): this test used to run the string case ONLY, which raises
+    `ValueError`. The non-string cases raise `AttributeError` from `UUID()`, which
+    `get_slots` did not catch — so the one shape that escaped the store was the one shape
+    this test omitted, and the boundary test next to it routed around the gap by listing
+    `AttributeError` in a `pytest.raises` tuple. Every shape is now proven to DROP.
+    """
     import asyncio
 
     from services.state_machine.store import RedisStateStore
 
+    corrupt = (
+        '{"s":"AVAILABLE","t":"tok","f":1,"p":"6f1b1c62-0000-4000-8000-000000000001",'
+        f'"l":2,"c":2,"e":{stored}}}'
+    ).encode()
+
     class _Redis:
         async def hgetall(self, key):  # noqa: ANN001, ANN202 - test double
             return {
-                b"19:00|bar": (
-                    b'{"s":"AVAILABLE","t":"tok","f":1,'
-                    b'"p":"6f1b1c62-0000-4000-8000-000000000001","l":2,"c":2,"e":"broken"}'
-                ),
+                b"19:00|bar": corrupt,
                 b"20:00|bar": (
                     b'{"s":"PENDING","t":"tok","f":1,'
                     b'"p":"6f1b1c62-0000-4000-8000-000000000001","l":2,"c":null,"e":null}'

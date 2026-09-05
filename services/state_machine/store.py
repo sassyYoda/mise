@@ -112,9 +112,23 @@ class RedisStateStore:
             name = _text(field)
             try:
                 records[name] = SlotRecord.from_json(_text(value))
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, AttributeError):
                 # An unreadable field is dropped rather than raised: the slot re-enters the
                 # PENDING cycle and must be confirmed again, which is the safe direction.
+                #
+                # `AttributeError` is in the tuple because of CR-02 (iteration 3), and it is
+                # not hypothetical: `UUID(x)` does NOT raise ValueError for a non-string, it
+                # raises `AttributeError: 'int' object has no attribute 'replace'` from
+                # `hex.replace(...)`. A stored `"e": 42` therefore escaped this except clause
+                # entirely, left `get_slots`, left `DiffEngine.process()`, and landed in
+                # `handle_message`'s transient arm — which since CR-01 (iteration 2) REWINDS
+                # the partition and retries forever against a record that can never parse.
+                # `from_json` now rejects a non-string `event_id` with a ValueError of its own,
+                # so this widening is defence in depth: the catch here is deliberately by
+                # CONSEQUENCE ("this field is unreadable"), not by the exception type today's
+                # validator happens to raise, so a future validator cannot silently reopen the
+                # hole. Anything broader (a bare `Exception`) would swallow a genuine bug in
+                # the store itself, which is why it is a widened tuple and not `Exception`.
                 log.warning("slot_record_unreadable", restaurant_id=rid, slot_key=name)
         return records
 
