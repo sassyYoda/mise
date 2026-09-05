@@ -1471,7 +1471,7 @@ Not applicable — Phase 4 is greenfield (a new service, a new API skeleton, new
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — see 04-CONTEXT.md amendments D-84a, D-86a, D-88, D-89)
 
 ### OQ-1 — Where do `CRASH_HOOK_ENVS` / `crash_hook_allowed()` live once two services need them?
 

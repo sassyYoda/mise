@@ -132,12 +132,26 @@ Plans:
 **Plans**: 7 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 04-01-shared-token-crypto-kernel-PLAN.md — wave 1: HMAC capability tokens, platform deep links, AES-256-GCM phone crypto, the Twilio/Svix signature verifiers, and the shared crash hook
 - [ ] 04-02-events-redis-schema-kernel-PLAN.md — wave 1: `NotificationQueued`/`NotificationSent`, the Layer-2 claim key and daily-cap Lua, migration 0010, and the `notifications.dlq` topic
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 04-03-notifier-fanout-core-PLAN.md — wave 2: notifier config, the pure watch matcher, persistence, and the manual-commit fan-out consumer
 - [ ] 04-04-api-links-webhooks-PLAN.md — wave 2: the FastAPI skeleton with `/go`, `/unsubscribe`, and the Twilio and Resend webhooks
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 04-05-templates-providers-PLAN.md — wave 3: message templates on the GSM-7 budget plus the email, SMS and Web Push providers over httpx
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 04-06-delivery-workers-chaos-PLAN.md — wave 4: the delivery worker, the service entrypoint, and the SIGKILL chaos proof of SC2
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 04-07-measurement-runbooks-docs-PLAN.md — wave 5: the PERF-01 and PERF-03 gates, Make targets, env block, and the two pending-human runbooks
 
 **UI hint**: no
