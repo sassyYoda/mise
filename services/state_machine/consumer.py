@@ -218,7 +218,7 @@ class StateMachineConsumer:
         log.info("poll_expedited", restaurant_id=decision.restaurant_id, outcome=outcome)
 
     async def _apply_emit(self, decision: Emit) -> None:
-        """One confirmed emission, executed in the D-46 order: claim, send, record, persist."""
+        """One confirmed emission, in the D-46 order: claim, send, persist, record."""
         event = decision.event
         # The claim key carries the SLOT KEY as well as the token (D-36, D-46 as amended by
         # CR-01): OpenTable gives every seating type of one timeslot the same booking token,
@@ -258,14 +258,21 @@ class StateMachineConsumer:
             party_size=event.party_size,
         )
 
+        # The analytics row goes in BEFORE the state write, not after. The insert is
+        # idempotent (ON CONFLICT (event_id, "time") DO NOTHING), so attempting it twice is
+        # harmless — but attempting it ZERO times is not recoverable. With the state write
+        # first, a crash in between left the slot durably AVAILABLE and the event on the wire
+        # with no DB row: the redelivered poll produces no Emit, insert_event is never
+        # retried, and the later Close UPDATE silently matches zero rows. Best-effort
+        # persistence (D-48) covers a FAILED insert, not a never-attempted one.
+        await insert_event(event)
+
         # Flush ONLY this slot (D-46 step 3, CR-02). A message-wide flush here would make
         # every other slot in the poll durably AVAILABLE before its own send_and_wait had
         # happened, and a crash in that window would lose those openings for good: the next
         # diff reads AVAILABLE, takes the refresh path, and never emits again.
         await self._flush_slot(decision)
         _maybe_crash("state_write")
-
-        await insert_event(event)
 
     async def _crashed_mid_emit(self, decision: Emit) -> bool:
         """

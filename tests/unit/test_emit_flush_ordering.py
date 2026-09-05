@@ -173,3 +173,40 @@ async def test_a_crash_on_the_second_send_leaves_that_slot_pending_and_it_re_emi
     )
     states = {k: v.state for k, v in (await durable.get_slots(RID, DATE, PARTY)).items()}
     assert states == {BAR: SlotState.AVAILABLE, STANDARD: SlotState.AVAILABLE}
+
+
+@pytest.mark.asyncio
+async def test_the_analytics_row_is_written_before_the_state_write(monkeypatch) -> None:
+    """WR-03: a crash between the state write and the INSERT lost the row forever.
+
+    The insert is idempotent, so running it twice costs nothing; running it zero times is not
+    recoverable, because the redelivered poll finds the slot AVAILABLE and produces no Emit.
+    """
+    durable = MemoryStateStore()
+    order: list[str] = []
+
+    async def _record_insert(event: AvailabilityEvent) -> None:
+        records = await durable.get_slots(RID, DATE, PARTY)
+        order.append(f"insert:{event.seat_type}")
+        assert records.get(f"19:00|{event.seat_type}", None) is None or (
+            records[f"19:00|{event.seat_type}"].state is not SlotState.AVAILABLE
+        ), "the state write landed before the INSERT it is supposed to follow"
+
+    monkeypatch.setattr("services.state_machine.consumer.insert_event", _record_insert)
+
+    producer = AsyncMock()
+    buffer = BufferedStateStore(durable)
+    shell = StateMachineConsumer(
+        consumer=AsyncMock(),
+        producer=producer,
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        scheduler=AsyncMock(),
+        engine=DiffEngine(buffer, confirm_delay_ms=CONFIRM_DELAY_MS),
+        store=durable,
+        buffer=buffer,
+    )
+
+    for polled_at in (T0, T1):
+        await shell._handle_raw(_msg(polled_at))
+
+    assert order == ["insert:bar", "insert:standard"]

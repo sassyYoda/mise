@@ -61,8 +61,8 @@ Two rules keep this honest:
       +--> Emit, per slot, in this order and no other:
       |       1. SET event:{rid}:{date}:{party}:{slot_key}:{token} 1 NX EX 1200  <- Layer-1 claim
       |       2. producer.send_and_wait("availability.events", ...)    <- acks=all, never a bare send
-      |       3. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write, THIS slot only
-      |       4. INSERT ... ON CONFLICT (event_id, "time") DO NOTHING  <- best effort
+      |       3. INSERT ... ON CONFLICT (event_id, "time") DO NOTHING  <- idempotent, best effort
+      |       4. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write, THIS slot only
       |
       +--> Close: UPDATE ... WHERE event_id = ? AND "time" = ?         <- DB only, no Kafka
       |
@@ -97,6 +97,12 @@ rather than aspirational:
   durable; the remaining buffered writes (drops, closures, meta) are flushed at the tail of the
   message. Guarded by `tests/unit/test_emit_flush_ordering.py`, which snapshots the durable
   store at the moment of each send and replays a crash on the second slot's send.
+* **The INSERT sits before the state write, not after.** It is idempotent, so a duplicate
+  attempt is free; a never-attempted one is not recoverable. With the state write first, a
+  crash between them left the slot durably AVAILABLE and the event on the wire with no DB row
+  — the redelivered poll produces no `Emit`, `insert_event` is never retried, and the later
+  `Close` UPDATE silently matches zero rows. D-48's best-effort persistence covers a *failed*
+  insert, not a never-attempted one.
 * **On the row-4 restart the skip happens one layer earlier than the table suggests.** The
   redelivered poll now finds the slot AVAILABLE, so the engine produces no `Emit` at all and
   the shell's claim branch is never reached. The outcome — zero duplicates — is identical, and
