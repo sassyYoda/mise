@@ -29,6 +29,7 @@ from services.state_machine.config import (
 from services.state_machine.consumer import StateMachineConsumer
 from services.state_machine.engine import DiffEngine
 from services.state_machine.store import BufferedStateStore, RedisStateStore
+from shared.db import dispose_engine
 from shared.kafka import make_consumer, make_producer
 from shared.scheduler.lua import LuaScheduler
 from shared.telemetry import configure_logging, get_logger
@@ -83,6 +84,14 @@ async def run() -> None:
     # Redis — which is the order the previous `finally` used.
     try:
         async with AsyncExitStack() as stack:
+            # persistence.py creates the SQLAlchemy engine lazily on its first write, so
+            # nothing else ever disposes it. Registered before anything is acquired, which
+            # under LIFO unwinding makes it the LAST thing torn down: the asyncpg pool is
+            # then closed against a live loop instead of being garbage-collected against a
+            # closing one ("Event loop is closed", unclosed connections, server-side
+            # sessions left to time out). A no-op when no write ever happened.
+            stack.push_async_callback(dispose_engine)
+
             r = redis.from_url(url)
             stack.push_async_callback(r.aclose)
 

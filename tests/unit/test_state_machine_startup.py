@@ -60,3 +60,45 @@ async def test_a_failing_consumer_closes_redis_and_the_producer(
 
     assert producer.stop.await_count == 1, "the started producer was leaked"
     assert fake_redis.aclose.await_count == 1, "the Redis connection was leaked"
+
+
+# -- WR-05: the SQLAlchemy async engine must be disposed on shutdown --
+
+
+@pytest.mark.asyncio
+async def test_the_db_engine_is_disposed_even_when_startup_fails(
+    monkeypatch, fake_redis
+) -> None:
+    """`persistence` creates the engine lazily and nothing else ever disposes it."""
+    disposed: list[str] = []
+
+    async def _dispose() -> None:
+        disposed.append("disposed")
+
+    async def _boom(bootstrap_servers: str) -> None:
+        raise RuntimeError("Kafka topics missing: ['availability.events']")
+
+    monkeypatch.setattr(main, "dispose_engine", _dispose)
+    monkeypatch.setattr(main, "_assert_topics_exist", _boom)
+
+    with pytest.raises(RuntimeError, match="topics missing"):
+        await main.run()
+
+    assert disposed == ["disposed"], "the asyncpg pool was never closed"
+
+
+@pytest.mark.asyncio
+async def test_dispose_engine_is_a_no_op_without_an_engine() -> None:
+    """Safe on a service that never wrote a row, and safe to call twice."""
+    import shared.db as shared_db
+
+    original_engine = shared_db._engine
+    original_factory = shared_db._session_factory
+    try:
+        shared_db._engine = None
+        shared_db._session_factory = None
+        await shared_db.dispose_engine()
+        await shared_db.dispose_engine()
+    finally:
+        shared_db._engine = original_engine
+        shared_db._session_factory = original_factory

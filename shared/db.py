@@ -3,6 +3,7 @@ SQLAlchemy 2.0 async ORM models and session factory (D-04).
 Uses asyncpg driver for app hot path; psycopg3 is for Alembic only.
 Named tables: users, restaurants, watchlist_entries, notification_log,
               availability_events, poll_log
+Named symbols: get_engine, get_async_session, dispose_engine
 """
 from __future__ import annotations
 
@@ -174,3 +175,18 @@ def get_async_session() -> async_sessionmaker[AsyncSession]:
             expire_on_commit=False,
         )
     return _session_factory
+
+
+async def dispose_engine() -> None:
+    """
+    Close the engine's connection pool and drop the cached singletons.
+
+    Every long-running service must await this on shutdown. Without it the asyncpg pool's
+    connections are garbage-collected against a closing event loop, which produces
+    "Event loop is closed" / unclosed-connection noise and leaves server-side sessions to time
+    out on their own. Safe to call when no engine was ever created, and safe to call twice.
+    """
+    global _engine, _session_factory
+    engine, _engine, _session_factory = _engine, None, None
+    if engine is not None:
+        await engine.dispose()
