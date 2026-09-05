@@ -43,7 +43,7 @@ from shared.redis_keys import (
     set_nx_ex,
 )
 from shared.scheduler.lua import LuaScheduler
-from shared.telemetry import get_logger
+from shared.telemetry import get_logger, safe_error
 
 log = get_logger(__name__)
 
@@ -278,7 +278,11 @@ class StateMachineConsumer:
                 "poll_unparseable",
                 restaurant_id=raw.restaurant_id,
                 poll_id=str(raw.poll_id),
-                reason=str(exc),
+                # The ParseError message is already payload-free by construction
+                # (parsers/errors.py names the defect and the offending TYPE, never the
+                # value); `safe_error` is belt-and-braces for anything a future parser
+                # interpolates, and names the exception class alongside the reason.
+                reason=safe_error(exc),
             )
             return
 
@@ -471,6 +475,13 @@ class StateMachineConsumer:
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
-                error=str(exc),
+                # `_failure_shape`, not `str(exc)` (WR-07). A KafkaError carries no booking
+                # token, so the impact today is low — but `_failure_shape` exists precisely so
+                # that no branch reaches for `str(exc)` again, and this was the last one that
+                # did. Broker error strings routinely carry hostnames and ports, and once SASL
+                # is configured in a later phase they carry principal names too. The value of
+                # the discipline is that it is unconditional: a future reader copying the
+                # nearest example must not find the wrong one.
+                error=_failure_shape(exc),
             )
         _maybe_crash("commit")

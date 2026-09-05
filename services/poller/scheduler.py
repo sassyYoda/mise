@@ -23,7 +23,7 @@ from services.poller.publisher import Publisher
 from services.poller.sources.opentable.adapter import OpenTableAdapter
 from shared.redis_keys import CONFIRM_DELAY_MS, POLL_INTERVAL_SECONDS, POLL_JITTER_FRACTION
 from shared.scheduler.lua import LuaScheduler
-from shared.telemetry import get_logger
+from shared.telemetry import get_logger, safe_error
 
 log = get_logger(__name__)
 
@@ -119,7 +119,7 @@ async def poll_loop(
             log.error(
                 "poll_timeout",
                 restaurant_id=restaurant_id,
-                error=error_str,
+                error=safe_error(exc),
             )
         except Exception as exc:  # noqa: BLE001 — catch-all for operational robustness
             status = "error"
@@ -127,7 +127,7 @@ async def poll_loop(
             log.error(
                 "poll_failed",
                 restaurant_id=restaurant_id,
-                error=error_str,
+                error=safe_error(exc),
             )
         finally:
             latency_ms = int((time.monotonic() - t_start) * 1000)

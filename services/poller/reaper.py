@@ -10,7 +10,7 @@ import time
 
 from shared.redis_keys import REAPER_INTERVAL_SECONDS
 from shared.scheduler.lua import LuaScheduler
-from shared.telemetry import get_logger
+from shared.telemetry import get_logger, safe_error
 
 log = get_logger(__name__)
 
@@ -32,4 +32,4 @@ async def reaper_loop(scheduler: LuaScheduler) -> None:
             else:
                 log.debug("reaper_no_expired_jobs")
         except Exception as exc:  # noqa: BLE001 — log and continue; reaper must not die
-            log.error("reaper_error", error=str(exc))
+            log.error("reaper_error", error=safe_error(exc))

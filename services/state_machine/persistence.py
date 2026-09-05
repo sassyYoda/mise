@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from shared.db import AvailabilityEvent as AvailabilityEventRow
 from shared.db import get_async_session
 from shared.events import AvailabilityEvent
-from shared.telemetry import get_logger
+from shared.telemetry import get_logger, safe_error
 
 log = get_logger(__name__)
 
@@ -104,11 +104,15 @@ async def insert_event(event: AvailabilityEvent) -> None:
             await session.execute(statement)
             await session.commit()
     except Exception as exc:  # noqa: BLE001 — best effort: never block the emit or the commit
+        # `safe_error`, never `str(exc)` (CR-03). This is the one place in the codebase where a
+        # failure message is GUARANTEED to carry a live booking token: the values dict above
+        # binds `booking_token`, SQLAlchemy's `StatementError.__str__` renders bound parameters
+        # by default, and every DBAPI failure during `session.execute` arrives as one.
         log.error(
             "availability_event_insert_failed",
             event_id=str(event.event_id),
             restaurant_id=event.restaurant_id,
-            error=str(exc),
+            error=safe_error(exc),
         )
 
 
@@ -159,8 +163,11 @@ async def close_event(event_id: UUID, confirmed_at: datetime, last_seen_at: date
                 confirmed_at=confirmed_at.isoformat(),
             )
     except Exception as exc:  # noqa: BLE001 — best effort: a stalled close never stalls Kafka
+        # Same treatment as `insert_event` (WR-03). The parameters here are an event id and
+        # two timestamps, so no capability leaks — but the rendered UPDATE statement is still a
+        # payload body in a log line, and it made the failure line unbounded in length.
         log.error(
             "availability_event_close_failed",
             event_id=str(event_id),
-            error=str(exc),
+            error=safe_error(exc),
         )
