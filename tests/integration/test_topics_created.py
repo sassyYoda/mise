@@ -38,7 +38,8 @@ async def _run_create_topics(bootstrap: str) -> None:
 
 async def _describe_topic_configs(bootstrap: str, topic_names: list[str]) -> dict[str, dict[str, str]]:
     """Return {topic: {config_name: config_value}} using AIOKafkaAdminClient."""
-    from aiokafka.admin import AIOKafkaAdminClient, ConfigResource, ConfigResourceType
+    from aiokafka.admin import AIOKafkaAdminClient
+    from aiokafka.admin.config_resource import ConfigResource, ConfigResourceType
 
     admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
     await admin.start()
