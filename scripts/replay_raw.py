@@ -325,9 +325,27 @@ def canonical_topic(topic: str) -> str:
 
 
 def records_to_envelopes(topic: str, records: Iterable[Any]) -> list[Envelope]:
-    """Wrap Kafka records in the same tagged envelope the jsonl fixtures use."""
+    """
+    Wrap Kafka records in the same tagged envelope the jsonl fixtures use.
+
+    Raises InputError for a record that is not decodable JSON, naming the offset. An unguarded
+    decode raised `JSONDecodeError` on a non-JSON record and `AttributeError` on a tombstone
+    (`record.value is None`); `main()` catches neither, so both escaped as an unhandled
+    traceback, the documented "1 — usage or I/O error" contract was not honoured, and the
+    `--from-offset` path behaved differently from `--input` (which does wrap failures) for the
+    very same defect.
+    """
     role = canonical_topic(topic)
-    return [{"topic": role, "value": json.loads(record.value.decode("utf-8"))} for record in records]
+    envelopes: list[Envelope] = []
+    for record in records:
+        if record.value is None:
+            raise InputError(f"{topic}[{record.offset}]: tombstone record has no value")
+        try:
+            value = json.loads(record.value.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise InputError(f"{topic}[{record.offset}]: {exc}") from exc
+        envelopes.append({"topic": role, "value": value})
+    return envelopes
 
 
 async def run_offset_mode(

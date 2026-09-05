@@ -21,10 +21,12 @@ from pathlib import Path
 import pytest
 
 from scripts.replay_raw import (
+    InputError,
     OutputPathError,
     canonical_topic,
     main,
     read_envelopes,
+    records_to_envelopes,
     replay,
     resolve_output_path,
     run_input_mode,
@@ -293,3 +295,41 @@ def test_the_env_example_documents_the_confirmation_window_and_the_crash_hook() 
     banner = "\n".join(lines[max(0, crash_index - 4) : crash_index])
     assert "TEST ONLY" in banner
     assert "must be unset" in banner
+
+
+# -- WR-12: a malformed or tombstoned record must honour the exit-code contract --
+
+
+class _FakeRecord:
+    """The two fields records_to_envelopes touches."""
+
+    def __init__(self, offset: int, value: bytes | None) -> None:
+        self.offset = offset
+        self.value = value
+
+
+def test_a_non_json_record_raises_input_error_naming_the_offset() -> None:
+    """JSONDecodeError escaped main()'s handler and surfaced as a traceback."""
+    with pytest.raises(InputError, match=r"availability\.raw\[41\]"):
+        records_to_envelopes("availability.raw", [_FakeRecord(41, b"<html>502</html>")])
+
+
+def test_a_tombstone_record_raises_input_error_naming_the_offset() -> None:
+    """`record.value is None` raised AttributeError, which main() also did not catch."""
+    with pytest.raises(InputError, match=r"availability\.raw\[7\]"):
+        records_to_envelopes("availability.raw", [_FakeRecord(7, None)])
+
+
+def test_a_non_utf8_record_raises_input_error() -> None:
+    with pytest.raises(InputError):
+        records_to_envelopes("availability.raw", [_FakeRecord(3, b"\xff\xfe not utf-8")])
+
+
+def test_the_offset_path_and_the_input_path_fail_the_same_way(tmp_path: Path) -> None:
+    """Both modes must exit 1 on a malformed message, not 0 and not a traceback."""
+    bad_input = tmp_path / "bad.jsonl"
+    bad_input.write_text("{not json\n", encoding="utf-8")
+    assert main(["--input", str(bad_input)]) == 1
+
+    with pytest.raises(InputError):
+        records_to_envelopes("availability.raw", [_FakeRecord(0, b"{not json")])
