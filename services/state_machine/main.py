@@ -10,6 +10,9 @@ Startup guard 1: all 5 Named-Symbol Kafka topics must exist, because auto-creati
 and a missing topic would otherwise fail silently per-publish (D-27).
 Startup guard 2: the test-only crash hook is refused unless ENV is EXPLICITLY one of the
 dev/test/ci/local allowlist — a safety interlock has to fail closed (T-02-04).
+
+Shutdown: SIGTERM/SIGINT are turned into task cancellation by ``shared.shutdown``, so the
+exit stack unwinds instead of the process being terminated where it stands (WR-02).
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ from services.state_machine.store import BufferedStateStore, RedisStateStore
 from shared.db import dispose_engine
 from shared.kafka import make_consumer, make_producer
 from shared.scheduler.lua import LuaScheduler
+from shared.shutdown import run_until_signal
 from shared.telemetry import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -141,7 +145,13 @@ async def run() -> None:
                 confirm_delay_ms=CONFIRM_DELAY_MS,
             )
 
-            await state_machine.run()
+            # SIGTERM must unwind the stack, not kill the process where it stands (WR-02).
+            # `docker stop`, `make down`, a Kubernetes eviction and the chaos test's own
+            # `terminate()` all send SIGTERM, and Python's default disposition would end the
+            # process before `consumer.stop()`, `producer.stop()`, `r.aclose()` and
+            # `dispose_engine()` could run — the last of which shared/db.py documents as
+            # mandatory. The producer's 20 ms linger batch was dropped rather than flushed.
+            await run_until_signal(state_machine.run())
     finally:
         log.info("state_machine_stopped")
 

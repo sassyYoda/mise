@@ -27,6 +27,7 @@ from services.poller.sources.opentable.adapter import OpenTableAdapter
 from shared.http_client import close_async_client, get_async_client
 from shared.kafka import make_producer
 from shared.scheduler.lua import LuaScheduler
+from shared.shutdown import run_until_signal
 from shared.telemetry import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -93,9 +94,14 @@ async def run() -> None:
         )
 
         try:
-            await asyncio.gather(
-                poll_loop(scheduler, opentable, publisher),
-                reaper_loop(scheduler),
+            # SIGTERM unwinds instead of terminating the process where it stands (WR-02):
+            # otherwise `docker stop` skipped `producer.stop()` and `r.aclose()` below, and
+            # the producer's in-flight linger batch went with it.
+            await run_until_signal(
+                asyncio.gather(
+                    poll_loop(scheduler, opentable, publisher),
+                    reaper_loop(scheduler),
+                )
             )
         finally:
             await producer.stop()
