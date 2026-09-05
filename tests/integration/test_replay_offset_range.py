@@ -20,7 +20,13 @@ import pytest
 from aiokafka import AIOKafkaConsumer, TopicPartition
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 
-from scripts.replay_raw import fetch_offset_range, records_to_envelopes, replay, run_offset_mode
+from scripts.replay_raw import (
+    InputError,
+    fetch_offset_range,
+    records_to_envelopes,
+    replay,
+    run_offset_mode,
+)
 from shared.events import AvailabilityEvent, AvailabilityRaw
 from shared.kafka import make_producer
 
@@ -239,3 +245,87 @@ async def test_an_empty_topic_exits_2_rather_than_hanging(
     out = tmp_path / "nothing.events.jsonl"
     assert await run_offset_mode(empty_topic, bootstrap, 0, None, out) == 2
     assert not out.exists()
+
+
+# -- WR-11: offsets are per-partition, so a multi-partition topic must be named explicitly --
+
+
+async def _seed_multi_partition_topic(bootstrap: str, partitions: int = 3) -> str:
+    """A topic with more than one partition, holding one message on partition 0's key."""
+    topic = f"availability.raw.multipart-{uuid.uuid4().hex[:8]}"
+    admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
+    await admin.start()
+    try:
+        await admin.create_topics(
+            [NewTopic(topic, num_partitions=partitions, replication_factor=1)]
+        )
+    finally:
+        await admin.close()
+
+    producer = await make_producer(bootstrap)
+    try:
+        for index in range(SEEDED_MESSAGES):
+            await producer.send_and_wait(topic, value=_raw(index).to_bytes(), key=JOB)
+    finally:
+        await producer.stop()
+    return topic
+
+
+@pytest.mark.asyncio
+async def test_a_multi_partition_topic_is_refused_without_an_explicit_partition(
+    kafka_container,
+) -> None:
+    """Silently reading partition 0 replays a fraction of the stream and exits 0."""
+    bootstrap = kafka_container.get_bootstrap_server()
+    topic = await _seed_multi_partition_topic(bootstrap)
+
+    with pytest.raises(InputError) as exc_info:
+        await fetch_offset_range(topic, bootstrap, 0, None)
+
+    message = str(exc_info.value)
+    assert "--partition" in message, message
+    assert "per-partition" in message, message
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_partition_reads_that_partition(kafka_container) -> None:
+    """Naming the partition makes the range unambiguous again."""
+    bootstrap = kafka_container.get_bootstrap_server()
+    topic = await _seed_multi_partition_topic(bootstrap)
+
+    # Every message shares one key, so Kafka routes them all to a single partition; find it.
+    found = [
+        p
+        for p in range(3)
+        if await fetch_offset_range(topic, bootstrap, 0, None, partition=p)
+    ]
+    assert len(found) == 1, f"one key must map to one partition, got {found}"
+    records = await fetch_offset_range(topic, bootstrap, 0, None, partition=found[0])
+    assert len(records) == SEEDED_MESSAGES
+
+
+@pytest.mark.asyncio
+async def test_a_partition_that_does_not_exist_is_refused(kafka_container) -> None:
+    bootstrap = kafka_container.get_bootstrap_server()
+    topic = await _seed_topic(bootstrap)
+
+    with pytest.raises(InputError, match="no partition 7"):
+        await fetch_offset_range(topic, bootstrap, 0, None, partition=7)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_topic_is_refused(kafka_container) -> None:
+    """A typo'd --topic used to look exactly like a stream that confirmed nothing."""
+    bootstrap = kafka_container.get_bootstrap_server()
+
+    with pytest.raises(InputError, match="does not exist"):
+        await fetch_offset_range(f"no.such.topic.{uuid.uuid4().hex[:8]}", bootstrap, 0, None)
+
+
+@pytest.mark.asyncio
+async def test_a_single_partition_topic_still_needs_no_flag(kafka_container) -> None:
+    """The common case must not regress into requiring a flag."""
+    bootstrap = kafka_container.get_bootstrap_server()
+    topic = await _seed_topic(bootstrap)
+
+    assert len(await fetch_offset_range(topic, bootstrap, 0, None)) == SEEDED_MESSAGES

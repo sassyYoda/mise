@@ -175,6 +175,7 @@ without breaking the diff. At the MVP's ~400 events/day, one consumer is far fro
 make replay ARGS="--help"
 make replay ARGS="--input tests/fixtures/raw_streams/happy.jsonl"
 make replay ARGS="--from-offset 2 --to-offset 5 --output /tmp/events.jsonl"
+make replay ARGS="--from-offset 0 --partition 2"
 ```
 
 `scripts/replay_raw.py` feeds raw messages through `DiffEngine(MemoryStateStore())` and writes
@@ -182,7 +183,13 @@ one canonical event per line — `AvailabilityEvent.to_bytes()`, the same serial
 uses, so the output is byte-identical to what the consumer put on the wire.
 
 `--to-offset` is **EXCLUSIVE** and defaults to the topic's end offsets, so `--from-offset 2
---to-offset 5` replays offsets 2, 3 and 4 (D-55). Replay uses `group_id=None` with
+--to-offset 5` replays offsets 2, 3 and 4 (D-55).
+
+`--partition` names the partition to replay. Kafka offsets are per-partition, so it is
+**required** once the topic has more than one — `availability.raw` has one today, and the
+scaling section above contemplates raising that. A multi-partition topic with no `--partition`
+is refused with an explicit error rather than silently replaying partition 0 and exiting 0 as
+though it had covered the whole stream. Replay uses `group_id=None` with
 `assign`/`seek` and never `subscribe`, so it cannot move the `state-machine` group's committed
 offsets, and it opens no Redis or Postgres connection at all (D-49, D-50).
 

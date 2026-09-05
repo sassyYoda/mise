@@ -23,7 +23,9 @@ Exit codes:
   2 — no messages found in the requested offset range
 
 Named symbols: replay, read_envelopes, write_lines, resolve_output_path, run_input_mode,
-               fetch_offset_range, canonical_topic, records_to_envelopes, run_offset_mode,
+               topic_partitions, resolve_partition, fetch_offset_range, canonical_topic,
+               records_to_envelopes,
+               run_offset_mode,
                route_diagnostics_to_stderr, InputError, OutputPathError, main
 """
 from __future__ import annotations
@@ -40,6 +42,7 @@ from typing import Any, Final
 from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer, TopicPartition
+from aiokafka.admin import AIOKafkaAdminClient
 from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 
@@ -196,12 +199,63 @@ async def run_input_mode(
     return 0
 
 
+async def topic_partitions(topic: str, bootstrap: str) -> set[int]:
+    """
+    Return the partition ids of `topic`, or an empty set if it does not exist.
+
+    An admin client rather than the consumer: `AIOKafkaConsumer.partitions_for_topic` reads
+    `self._client.cluster`, which stays empty here because this consumer deliberately never
+    subscribes, and `topics()` builds and then discards a throwaway `ClusterMetadata`. The
+    admin client is metadata-only, so replay stays read-only by construction (D-50, T-02-06).
+    """
+    admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
+    await admin.start()
+    try:
+        described = await admin.describe_topics([topic])
+    finally:
+        await admin.close()
+    return {
+        partition["partition"]
+        for entry in described
+        if entry.get("error_code", 0) == 0
+        for partition in entry.get("partitions", [])
+    }
+
+
+async def resolve_partition(topic: str, bootstrap: str, requested: int | None) -> int:
+    """
+    Decide which partition an offset range refers to, refusing anything ambiguous.
+
+    Kafka offsets are PER PARTITION, so `--from-offset 4000` names a different message on each
+    one. Hardcoding partition 0 meant that the first time `availability.raw` is scaled past one
+    partition — which the README's scaling section explicitly contemplates — a bounded replay
+    would silently cover a fraction of the stream and exit 0 as though it had replayed
+    everything. A single-partition topic still needs no flag; anything else must be named.
+    """
+    partitions = await topic_partitions(topic, bootstrap)
+    if not partitions:
+        raise InputError(f"topic {topic!r} does not exist, or has no partitions")
+    if requested is None:
+        if len(partitions) > 1:
+            raise InputError(
+                f"{topic} has {len(partitions)} partitions {sorted(partitions)} and Kafka "
+                "offsets are per-partition, so --from-offset is ambiguous. Name one with "
+                "--partition N."
+            )
+        return next(iter(partitions))
+    if requested not in partitions:
+        raise InputError(
+            f"{topic} has no partition {requested} (partitions: {sorted(partitions)})"
+        )
+    return requested
+
+
 async def fetch_offset_range(
     topic: str,
     bootstrap: str,
     from_offset: int,
     to_offset: int | None,
-    partition: int = 0,
+    partition: int | None = None,
 ) -> list[Any]:
     """
     Read a HALF-OPEN Kafka offset range `[from_offset, to_offset)` without joining a group.
@@ -211,11 +265,15 @@ async def fetch_offset_range(
     advance the `state-machine` group. `subscribe()` is never called — it is the call that
     joins a group, and `assign()` raises IllegalStateError if it ran first.
 
+    `partition` defaults to "the topic's only partition", and a multi-partition topic is
+    refused rather than silently read from partition 0 — see `resolve_partition`.
+
     `to_offset` defaults to the topic's `end_offsets`, which Kafka defines as last offset + 1;
     that is exactly why D-55 makes the flag EXCLUSIVE, so the default and an explicit bound
     mean the same thing. `assign` and `seek` are synchronous; `beginning_offsets`,
     `end_offsets` and `position` are coroutines (research §Pattern 5, verified transcript).
     """
+    tp = TopicPartition(topic, await resolve_partition(topic, bootstrap, partition))
     consumer = AIOKafkaConsumer(
         bootstrap_servers=bootstrap,
         group_id=None,
@@ -224,7 +282,6 @@ async def fetch_offset_range(
     await consumer.start()
     records: list[Any] = []
     try:
-        tp = TopicPartition(topic, partition)
         consumer.assign([tp])
         end = (await consumer.end_offsets([tp]))[tp]
         upper = end if to_offset is None else min(to_offset, end)
@@ -280,6 +337,7 @@ async def run_offset_mode(
     to_offset: int | None,
     output_path: Path | None,
     confirm_delay_ms: int = CONFIRM_DELAY_MS,
+    partition: int | None = None,
 ) -> int:
     """
     Replay a bounded Kafka offset range through the same engine `--input` mode uses.
@@ -287,11 +345,12 @@ async def run_offset_mode(
     An empty range is distinct from an empty result: exit 2 says "there was nothing there to
     replay", which is a different thing from "the replay produced no events".
     """
-    records = await fetch_offset_range(topic, bootstrap, from_offset, to_offset)
+    records = await fetch_offset_range(topic, bootstrap, from_offset, to_offset, partition)
     if not records:
         bound = "end_offsets" if to_offset is None else str(to_offset)
+        where = topic if partition is None else f"{topic}[p{partition}]"
         print(
-            f"ERROR: no messages in {topic}[{from_offset}, {bound}) — nothing to replay",
+            f"ERROR: no messages in {where}[{from_offset}, {bound}) — nothing to replay",
             file=sys.stderr,
         )
         return 2
@@ -350,6 +409,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--topic", default=RAW_TOPIC, help=f"Source topic (default: {RAW_TOPIC}).")
     parser.add_argument(
+        "--partition",
+        type=int,
+        metavar="N",
+        help=(
+            "Partition to replay. Kafka offsets are per-partition, so this is REQUIRED once "
+            "the topic has more than one; a single-partition topic needs no flag."
+        ),
+    )
+    parser.add_argument(
         "--bootstrap",
         default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094"),
         metavar="SERVERS",
@@ -374,6 +442,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.input is not None and args.to_offset is not None:
         parser.error("--to-offset is only meaningful with --from-offset")
+    if args.input is not None and args.partition is not None:
+        parser.error("--partition is only meaningful with --from-offset")
+    if args.partition is not None and args.partition < 0:
+        parser.error("--partition must not be negative")
     if args.from_offset is not None and args.from_offset < 0:
         parser.error("--from-offset must not be negative")
     if args.to_offset is not None and args.from_offset is not None and args.to_offset < args.from_offset:
@@ -389,7 +461,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.input is not None:
             return asyncio.run(run_input_mode(Path(args.input), output_path))
         return asyncio.run(
-            run_offset_mode(args.topic, args.bootstrap, args.from_offset, args.to_offset, output_path)
+            run_offset_mode(
+                args.topic,
+                args.bootstrap,
+                args.from_offset,
+                args.to_offset,
+                output_path,
+                partition=args.partition,
+            )
         )
     except (InputError, OSError, ValidationError, KafkaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
