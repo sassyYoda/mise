@@ -1034,27 +1034,29 @@ Asserting `returncode == -9` matters: without it, a test where the hook never fi
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Q1 — Does `restaurant_id` mean the OpenTable platform rid or `restaurants.id`?** *(highest-impact open item; must be settled before any DB write is coded)*
+> All five resolved in 02-CONTEXT.md §Amendments after research: Q1→D-52, Q2→D-53, Q3→D-54, Q4→D-55, Q5→D-56.
+
+1. **Q1 — Does `restaurant_id` mean the OpenTable platform rid or `restaurants.id`?** — RESOLVED: see D-52 *(highest-impact open item; must be settled before any DB write is coded)*
    - What we know: `scripts/seed_restaurants.py:109` seeds `make_job("opentable", int(platform_id))`, so the ZSET member, the job descriptor, `AvailabilityRaw.restaurant_id`, `request_params["rid"]`, the Kafka key `{source}:{restaurant_id}`, and the already-written `poll_log.restaurant_id` rows all carry the **platform rid**. Meanwhile `availability_events.restaurant_id` and `watchlist_entries.restaurant_id` are `BigInteger` columns that read semantically like `restaurants.id` (which is `autoincrement=True`).
    - What's unclear: whether Phase 6's heatmap and Phase 4's watchlist fanout were envisaged joining on `restaurants.id` or on `(source, platform_id)`.
    - **Recommendation:** keep the platform rid end-to-end in Phase 2 — it matches the raw stream, matches the `poll_log` precedent, and keeps `DiffEngine` free of any DB lookup (which is a hard requirement for D-49/D-50 determinism). Both `availability_events` and `poll_log` already carry a `source` column, so `(source, restaurant_id)` is a complete join key against `restaurants(source, platform_id::bigint)`. Encode the decision as: (a) a `COMMENT ON COLUMN availability_events.restaurant_id` in migration 0008, (b) a docstring line on `shared.events.AvailabilityEvent`, (c) an explicit note in `services/state_machine/README.md` telling Phase 4/5/6 how to join. If instead the DB id is wanted on the wire, that is a **Phase 1 change** (resolve `platform_id → id` at seed time or at poll time) and should be raised with the user, not decided here.
 
-2. **Q2 — Should `polls.completed` and `availability.raw` share one consumer?**
+2. **Q2 — Should `polls.completed` and `availability.raw` share one consumer?** — RESOLVED: see D-53
    - What we know: D-47 locks a single consumer and CONTEXT.md §Claude's Discretion explicitly says *"how `polls.completed` and `availability.raw` are interleaved (single consumer with topic check is fine)"*. Verified: `getone()` drained all `availability.raw` before any `polls.completed`.
    - What's unclear: nothing blocking.
    - **Recommendation:** keep the single consumer (D-47) and make UNKNOWN monotonic in `polled_at_epoch_ms` (§Pitfall 2). This is strictly better than two consumers, because it also makes replay order-independent.
 
-3. **Q3 — What is `NAMESPACE_MISE`?**
+3. **Q3 — What is `NAMESPACE_MISE`?** — RESOLVED: see D-54
    - What we know: D-45 names it but does not define it. `uuid5` requires a fixed namespace UUID.
    - **Recommendation:** hard-code a literal in `shared/events.py`, e.g. `NAMESPACE_MISE = UUID("629d45e6-9621-5f62-a1ea-dd826ede29f8")` (this session's `uuid5(NAMESPACE_URL, "https://mise.place/events")`), with a docstring stating it must never change — every historical `event_id` depends on it. Do **not** compute it at import.
 
-4. **Q4 — Does `--to-offset` include or exclude the endpoint?**
+4. **Q4 — Does `--to-offset` include or exclude the endpoint?** — RESOLVED: see D-55
    - What we know: `end_offsets` returns *last offset + 1*, so an exclusive upper bound composes naturally.
    - **Recommendation:** treat `--to-offset` as **exclusive** and default it to `end_offsets` when omitted; state it in `--help` and in `services/state_machine/README.md`. Add a test asserting `[2,5) → [2,3,4]` (already verified working).
 
-5. **Q5 — Should `ops/docker-compose.yml` be repointed off the withdrawn `bitnami/kafka:3.8` in this phase?**
+5. **Q5 — Should `ops/docker-compose.yml` be repointed off the withdrawn `bitnami/kafka:3.8` in this phase?** — RESOLVED: see D-56
    - What we know: it does not block Phase 2's automated tests (testcontainers uses cp-kafka), but it does block `make up`.
    - **Recommendation:** treat as a one-task fix inside Phase 2 (swap to `bitnamilegacy/kafka:3.8`, a drop-in that keeps every `KAFKA_CFG_*` var) **only if** the plan contains a manual step that needs `make up`. Otherwise capture it as a deferred item for Phase 7 (DEPLOY). It is infra outside the phase boundary — flag rather than silently change.
 
