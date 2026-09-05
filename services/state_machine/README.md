@@ -61,7 +61,7 @@ Two rules keep this honest:
       +--> Emit, per slot, in this order and no other:
       |       1. SET event:{rid}:{date}:{party}:{slot_key}:{token} 1 NX EX 1200  <- Layer-1 claim
       |       2. producer.send_and_wait("availability.events", ...)    <- acks=all, never a bare send
-      |       3. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write
+      |       3. HSET avail:{rid}:{date}:{party} <slot> AVAILABLE      <- state write, THIS slot only
       |       4. INSERT ... ON CONFLICT (event_id, "time") DO NOTHING  <- best effort
       |
       +--> Close: UPDATE ... WHERE event_id = ? AND "time" = ?         <- DB only, no Kafka
@@ -80,12 +80,23 @@ The order is not stylistic. Each step is placed so that a crash at any point is 
 | after state write, before commit | present | sent | AVAILABLE | uncommitted | NX fails + state AVAILABLE → **skip**. This is the D-51 chaos path. Zero duplicates. |
 | after commit | present | sent | AVAILABLE | committed | not redelivered |
 
-Two implementation notes that make the table true rather than aspirational:
+The table is **per slot**, and that word is load-bearing. One poll routinely confirms several
+slots (the OpenTable payload alone fans one timeslot out into one slot per seating type), and
+each of them walks steps 1-4 independently. Three implementation notes make the table true
+rather than aspirational:
 
 * **`BufferedStateStore` exists for row 2 and row 3.** The engine writes through its store as it
   diffs, so a bare `RedisStateStore` would record AVAILABLE *before* the Kafka send — and a
   crash in that window would leave a record the next diff reads as already-emitted, losing the
   opening for good. The shell buffers the engine's writes and flushes them at step 3.
+* **Step 3 flushes ONE slot, not the message.** `DiffEngine.process()` runs to completion before
+  any decision is applied, so when the first slot of a multi-slot poll reaches step 3 the
+  AVAILABLE records of every *other* slot are already in the buffer. A message-wide flush there
+  would make them durable before their own step 2, and rows 2 and 3 would be false for every
+  emit after the first. `BufferedStateStore.flush_slot` therefore makes exactly the acked slot
+  durable; the remaining buffered writes (drops, closures, meta) are flushed at the tail of the
+  message. Guarded by `tests/unit/test_emit_flush_ordering.py`, which snapshots the durable
+  store at the moment of each send and replays a crash on the second slot's send.
 * **On the row-4 restart the skip happens one layer earlier than the table suggests.** The
   redelivered poll now finds the slot AVAILABLE, so the engine produces no `Emit` at all and
   the shell's claim branch is never reached. The outcome — zero duplicates — is identical, and

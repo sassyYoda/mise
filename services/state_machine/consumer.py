@@ -234,7 +234,11 @@ class StateMachineConsumer:
             party_size=event.party_size,
         )
 
-        await self._flush()
+        # Flush ONLY this slot (D-46 step 3, CR-02). A message-wide flush here would make
+        # every other slot in the poll durably AVAILABLE before its own send_and_wait had
+        # happened, and a crash in that window would lose those openings for good: the next
+        # diff reads AVAILABLE, takes the refresh path, and never emits again.
+        await self._flush_slot(decision)
         _maybe_crash("state_write")
 
         await insert_event(event)
@@ -273,6 +277,16 @@ class StateMachineConsumer:
         """Make the engine's buffered state writes durable (no-op without a buffer)."""
         if self.buffer is not None:
             await self.buffer.flush()
+
+    async def _flush_slot(self, decision: Emit) -> None:
+        """Make ONE emitted slot's state write durable, leaving the rest of the poll buffered."""
+        if self.buffer is not None:
+            await self.buffer.flush_slot(
+                decision.event.restaurant_id,
+                decision.date,
+                decision.party_size,
+                decision.slot_key,
+            )
 
     def _discard(self) -> None:
         """Drop a failed message's partial writes rather than half-applying them."""

@@ -168,6 +168,16 @@ class BufferedStateStore:
     crash before the flush leaves the slot PENDING, and redelivery re-sends the same
     deterministic event id.
 
+    Buffering alone is not enough, and that is what `flush_slot` is for. `DiffEngine.process()`
+    runs to completion before any decision is applied, so by the time the shell emits the FIRST
+    slot of a multi-slot poll, every OTHER slot's AVAILABLE record is already sitting in the
+    buffer. A message-wide flush at that point makes all of them durable before their own Kafka
+    send has happened — and a crash in that window leaves a later slot durably AVAILABLE with an
+    event that was never sent, which the next diff reads as already-emitted. `flush_slot` makes
+    exactly one slot durable, so a crash before a later slot's send leaves that slot PENDING and
+    redelivery re-sends the same deterministic event id. The message-wide `flush` still runs at
+    the tail of the message, for the writes no Emit covers (drops, closures, meta).
+
     Reads are the inner store overlaid with the pending writes, so the engine still sees its own
     writes and stays completely unaware of the buffering.
     """
@@ -211,6 +221,24 @@ class BufferedStateStore:
         """Throw away a failed message's partial writes rather than half-applying them."""
         self._slots.clear()
         self._meta.clear()
+
+    async def flush_slot(self, rid: int, date: str, party: int, key: str) -> None:
+        """
+        Make ONE slot's buffered write durable, leaving every other buffered write pending.
+
+        This is the D-46 step-3 state write, and it is deliberately narrower than `flush`: the
+        record of a slot whose event has not been acked yet must NOT survive a crash. A slot
+        with no buffered write is a no-op, not an error — the shell calls this unconditionally
+        after a send, and a re-sent emit (the crashed-mid-emit branch) has nothing buffered.
+        """
+        slot = (rid, date, party, key)
+        if slot not in self._slots:
+            return
+        rec = self._slots.pop(slot)
+        if rec is None:
+            await self.inner.drop_slot(rid, date, party, key)
+        else:
+            await self.inner.put_slot(rid, date, party, key, rec)
 
     async def flush(self) -> None:
         """Apply every buffered write to the durable store in a stable order, then clear."""
