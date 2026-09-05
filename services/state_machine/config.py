@@ -10,7 +10,8 @@ at IMPORT time, so any integration test that imports the service during collecti
 whole run to the localhost defaults instead of its testcontainers (02-02 deviation 1). Reading
 lazily inside `run()` removes that footgun for this service permanently.
 Named symbols: CONSUMER_GROUP_ID, kafka_bootstrap_servers, redis_url, database_url_async,
-               env_name, crash_after, crash_hook_allowed, CRASH_HOOK_ENVS, CONFIRM_DELAY_MS
+               env_name, crash_after, crash_hook_allowed, CRASH_HOOK_ENVS, CONFIRM_DELAY_MS,
+               max_message_attempts, DEFAULT_MAX_MESSAGE_ATTEMPTS
 """
 from __future__ import annotations
 
@@ -25,11 +26,13 @@ __all__ = [
     "CONFIRM_DELAY_MS",
     "CONSUMER_GROUP_ID",
     "CRASH_HOOK_ENVS",
+    "DEFAULT_MAX_MESSAGE_ATTEMPTS",
     "crash_after",
     "crash_hook_allowed",
     "database_url_async",
     "env_name",
     "kafka_bootstrap_servers",
+    "max_message_attempts",
     "redis_url",
 ]
 
@@ -83,3 +86,44 @@ def crash_hook_allowed() -> bool:
 def crash_after() -> str | None:
     """TEST ONLY (D-51): stage after which the consumer SIGKILLs itself. Unset everywhere else."""
     return os.getenv("MISE_CRASH_AFTER")
+
+
+# How many times one message may be retried before it is treated as poison (CR-01). Five, not
+# ten: the backoff is 2 s, so five attempts is ten seconds of trying — long enough to ride out
+# a Redis failover or a broker leader election, short enough that a genuinely permanent failure
+# does not hold the partition for a minute before anyone hears about it.
+DEFAULT_MAX_MESSAGE_ATTEMPTS: int = 5
+
+
+def max_message_attempts() -> int:
+    """
+    Attempt cap for one message before it is dead-lettered and committed past (CR-01).
+
+    The transient arm used to have no cap at all: every exception that was not a
+    `ValidationError`/`ParseError` was ASSUMED transient and retried forever. "Everything else"
+    is not a synonym for "transient" — it includes `AttributeError`, `KeyError`, a
+    `MessageSizeTooLargeError`, a Redis `WRONGTYPE`, and every programming bug ever to be
+    introduced into `engine.py` or `store.py`. None of those succeeds on retry, so a permanent
+    failure converted a silent data loss into a permanently stalled partition, which for a
+    single-partition topic is a total pipeline outage that nothing pages on.
+
+    A value below 1 is refused rather than silently corrected: `STATE_MACHINE_MAX_ATTEMPTS=0`
+    would dead-letter every message on its first hiccup, which is worse than either failure
+    mode this cap exists to arbitrate between. A non-numeric value is refused for the same
+    reason — a typo must not quietly restore the unbounded behaviour.
+    """
+    raw = os.getenv("STATE_MACHINE_MAX_ATTEMPTS")
+    if raw is None or not raw.strip():
+        return DEFAULT_MAX_MESSAGE_ATTEMPTS
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"STATE_MACHINE_MAX_ATTEMPTS must be an integer >= 1, got {raw!r}"
+        ) from exc
+    if value < 1:
+        raise RuntimeError(
+            f"STATE_MACHINE_MAX_ATTEMPTS must be >= 1, got {value}: a cap below one "
+            "dead-letters every message on its first transient failure."
+        )
+    return value

@@ -131,6 +131,51 @@ The backoff is `consumer.pause()` plus a `loop.call_later` `resume`, never an in
 `asyncio.sleep` — `tests/unit/test_no_inline_sleep.py` bans a sleep anywhere in this service
 (D-43, STATE-03), and pause/resume is what Kafka provides for exactly this backpressure.
 
+### The rewind is bounded (CR-01)
+
+"Everything that is not a `ValidationError`/`ParseError`" is **not** a synonym for
+"transient". It includes `AttributeError`, `KeyError`, an `UnknownTopicOrPartitionError` after
+someone deletes a topic, a Redis `WRONGTYPE` or `OOM command not allowed`, and every
+programming bug that will ever be introduced into `engine.py` or `store.py`. None of those
+succeeds on retry. An unbounded rewind therefore trades a silent data loss for a permanently
+stalled partition — which on a single-partition topic is a total pipeline outage whose only
+symptom is `message_handling_failed` + `message_retry_scheduled` at 0.5 Hz, forever. **Stalling
+is not the safer failure: it drops every later observation too.**
+
+So the retry is capped at `STATE_MACHINE_MAX_ATTEMPTS` (default 5, `>= 1` enforced at startup),
+counted per `(topic, partition, offset)`. On exhaustion the message is treated as poison:
+
+| Step | What happens |
+|------|--------------|
+| 1 | `message_retries_exhausted` at ERROR, with the attempt count, the failure **shape**, and `metric=state_machine_messages_dead_lettered_total` for Phase 7's exporter |
+| 2 | the ORIGINAL bytes are published to **`availability.dlq`** (7-day retention, so the record outlives `availability.raw`'s 24 h), with `original_topic` / `original_partition` / `original_offset` / `attempts` / `error` headers |
+| 3 | the offset is committed and the partition moves on |
+
+The DLQ publish is best effort by design: if the broker is down too, `dead_letter_publish_failed`
+is logged and the commit still happens. A dead-letter topic that is itself unavailable must not
+be able to re-create the stall this mechanism exists to end. `availability.dlq` is created by
+`scripts/create_topics.py` and guarded at startup by both services' `REQUIRED_TOPICS`, so a
+deployment that skipped `make topics` fails immediately rather than at the moment the pipeline
+is already poisoned.
+
+### A retry never re-sends an acked event
+
+The second half of CR-01, and the more expensive one. When a permanent failure lands *after* a
+slot's `send_and_wait` — `_flush_slot` is the live example — every retry used to re-execute the
+emit: `set_nx_ex` returns False, `_crashed_mid_emit` reads a durable record still PENDING
+(because `_discard()` threw the buffered write away), answers True, and the event goes out
+again. At a 2 s backoff that is roughly 43k duplicate events a day. Phase 4's Layer-2 key
+dedupes the *notification*; nothing dedupes the topic, the analytics insert attempt, or the log
+stream.
+
+The shell therefore records each `event_id` the broker has **acked** for the offset currently
+under retry, and a retry skips the send for those (`emit_skipped_already_acked`) while still
+running the remaining, idempotent steps — the INSERT and the per-slot state write — so the slot
+does not stay PENDING with its event already on the wire. The set is cleared the moment the
+offset advances, because retry accounting that leaked across messages would suppress a genuine
+later emit. Guarded by `tests/unit/test_retry_cap_and_dlq.py`, which drives `run()` over the
+two-slot payload and asserts the retry sends the remaining slot **only**.
+
 ## Redis keys
 
 All key patterns and TTLs are declared in `shared/redis_keys.py` — never inline a key string
@@ -242,6 +287,7 @@ would stop being a golden.
 | `REDIS_URL` | `redis://localhost:6379/0` | Slot state, the emission claim and the scheduler ZSET. |
 | `DATABASE_URL_ASYNC` | `postgresql+asyncpg://mise:mise@localhost:5432/mise` | Analytics writes only; a failure is logged, never fatal. |
 | `CONFIRM_DELAY_MS` | — | **Not an environment variable.** The confirmation window is the compile-time constant `shared.redis_keys.CONFIRM_DELAY_MS` (8000 ms); setting it in a shell or a deployment does nothing. Listed here because it used to be documented as tunable. |
+| `STATE_MACHINE_MAX_ATTEMPTS` | `5` | How many times one message may be retried before it is dead-lettered to `availability.dlq` and committed past (CR-01). Must be `>= 1`: a value of `0`, a negative, or a non-integer is refused at startup rather than silently restoring the unbounded retry that stalled the partition forever. At the 2 s backoff, 5 attempts is ~10 s of trying — long enough to ride out a Redis failover, short enough that a permanent failure does not hold the partition. |
 | `ENV` | `dev` | Must be **explicitly** one of `dev`, `test`, `ci`, `local` for `MISE_CRASH_AFTER` to be accepted. Anything else — including unset — refuses to start with the hook armed. |
 | `MISE_CRASH_AFTER` | unset | **TEST ONLY.** SIGKILLs the process after the named stage (`nx_claim`, `kafka_send`, `state_write`, `commit`) so the chaos test can prove crash safety. `main.run()` raises unless `ENV` is explicitly one of `dev`/`test`/`ci`/`local`; the interlock fails closed, so an unconfigured container is not the most permissive configuration. |
 

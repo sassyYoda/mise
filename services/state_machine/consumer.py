@@ -11,7 +11,7 @@ Confirmation is never awaited in process: the re-verification arrives as another
 pulled forward through the ZSET scheduler (D-43, STATE-03).
 
 Logs carry ids and counts only — never a booking token and never a payload body (T-02-03).
-Named symbols: StateMachineConsumer, RAW_TOPIC, COMPLETED_TOPIC, EVENTS_TOPIC
+Named symbols: StateMachineConsumer, RAW_TOPIC, COMPLETED_TOPIC, EVENTS_TOPIC, DLQ_TOPIC
 """
 from __future__ import annotations
 
@@ -19,13 +19,14 @@ import asyncio
 import os
 import signal
 from typing import Any
+from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import KafkaError
 from pydantic import ValidationError
 from redis.asyncio import Redis
 
-from services.state_machine.config import crash_after
+from services.state_machine.config import crash_after, max_message_attempts
 from services.state_machine.engine import (
     MASS_CLOSURE_AUDIT_THRESHOLD,
     DiffEngine,
@@ -51,6 +52,12 @@ log = get_logger(__name__)
 RAW_TOPIC = "availability.raw"
 COMPLETED_TOPIC = "polls.completed"
 EVENTS_TOPIC = "availability.events"
+
+# Dead-letter topic for a message that exhausted its retries (CR-01). 7-day retention, like
+# the other diagnostic topics: long enough to survive a weekend, short enough not to become a
+# second copy of the raw stream. Created by `scripts/create_topics.py` and guarded at startup
+# by both services' `REQUIRED_TOPICS`, so by the time this module can publish it exists.
+DLQ_TOPIC = "availability.dlq"
 
 # How long a partition stays paused after a transient handler failure before the rewound
 # message is retried. Bounded and deliberately short: the point is to stop a hot retry loop
@@ -134,6 +141,7 @@ class StateMachineConsumer:
         engine: DiffEngine,
         store: StateStore,
         buffer: BufferedStateStore | None = None,
+        max_attempts: int | None = None,
     ) -> None:
         self.consumer = consumer
         self.producer = producer
@@ -148,6 +156,18 @@ class StateMachineConsumer:
         self.buffer = buffer
         # Pending `resume` timers, one per rewound partition (see `_retry_later`).
         self._resume_handles: dict[TopicPartition, asyncio.TimerHandle] = {}
+        # Retry accounting for the message currently at the head of a partition (CR-01). Only
+        # ONE message can be under retry at a time — the rewind makes the failed offset the
+        # next one delivered — so a single key plus a counter is the whole state, and it
+        # cannot grow. `_acked_event_ids` is the second half of the fix: it records which
+        # events the BROKER has already accepted for this offset, so a retry after a partial
+        # emit finishes the remaining work without putting a duplicate on the wire.
+        self._attempt_key: tuple[str, int, int] | None = None
+        self._attempts = 0
+        self._acked_event_ids: set[UUID] = set()
+        self._max_attempts = (
+            max_message_attempts() if max_attempts is None else max_attempts
+        )
 
     async def run(self) -> None:
         """Consume forever, one message at a time (D-47a: the factory sets max_poll_records=1)."""
@@ -182,7 +202,26 @@ class StateMachineConsumer:
         watermark and is never redelivered — the exact behaviour the no-commit branch was
         added to prevent. `tests/unit/test_offset_commit_policy.py` drives three messages
         through `run()` and asserts no committed offset ever passes a failed one.
+
+        The rewind is BOUNDED (CR-01, iteration 3). "Everything that is not a
+        `ValidationError`/`ParseError`" is not a synonym for "transient": it includes
+        `AttributeError`, `KeyError`, an `UnknownTopicOrPartitionError` after someone deletes
+        a topic, a Redis `WRONGTYPE`, and every programming bug that will ever be introduced
+        into `engine.py` or `store.py`. None of those will ever succeed on retry, so an
+        unbounded rewind converted iteration 2's silent data loss into a permanently stalled
+        partition — for a single-partition topic, a total pipeline outage whose only symptom
+        is two log lines at 0.5 Hz forever. Stalling the partition is not the safer failure:
+        it drops every LATER observation too. After `_max_attempts` the message is treated as
+        poison, published to the dead-letter topic, and committed past.
         """
+        key = (msg.topic, msg.partition, msg.offset)
+        if key != self._attempt_key:
+            # A different message: whatever came before is committed or dead-lettered, so its
+            # accounting is finished. Replacing rather than accumulating is what keeps this
+            # bounded — only the head of a partition can be under retry.
+            self._attempt_key = key
+            self._attempts = 0
+            self._acked_event_ids.clear()
         try:
             if msg.topic == RAW_TOPIC:
                 await self._handle_raw(msg)
@@ -209,20 +248,86 @@ class StateMachineConsumer:
                 # offending input value and therefore the payload (T-02-03).
                 error=_failure_shape(exc),
             )
-        except Exception as exc:  # noqa: BLE001 — transient infrastructure failure
+        except Exception as exc:  # noqa: BLE001 — presumed transient infrastructure failure
             self._discard()
+            self._attempts += 1
             log.error(
                 "message_handling_failed",
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
                 error=_failure_shape(exc),
+                attempt=self._attempts,
+                max_attempts=self._max_attempts,
             )
+            if self._attempts >= self._max_attempts:
+                # Not transient after all. Escalate to poison rather than retry forever.
+                log.error(
+                    "message_retries_exhausted",
+                    topic=msg.topic,
+                    partition=msg.partition,
+                    offset=msg.offset,
+                    attempts=self._attempts,
+                    error=_failure_shape(exc),
+                    metric=METRIC_MESSAGES_DEAD_LETTERED,
+                )
+                await self._dead_letter(msg, exc)
+                await self._commit(msg)
+                return
             # Deliberately NOT committed, AND rewound: not committing on its own leaves the
             # consumer position past this message, so the next success would commit over it.
             self._retry_later(msg)
             return
         await self._commit(msg)
+
+    async def _dead_letter(self, msg: Any, exc: BaseException) -> None:
+        """
+        Preserve a message that exhausted its retries, then let the caller commit past it.
+
+        The value is the ORIGINAL bytes. A dead-letter record that has been redacted down to a
+        failure shape is an audit trail nobody can replay from, and unlike a log line this is a
+        Kafka topic with the same trust boundary as `availability.raw` itself — the payload is
+        already there, this is a copy that outlives the raw topic's 24-hour retention. The
+        diagnostic context (where it came from, how many attempts, what failed) goes in the
+        headers, where the failure is rendered as a SHAPE because headers do end up in logs.
+
+        Best effort, and deliberately so: the caller commits past this message whether or not
+        the publish succeeds. A DLQ that is itself unavailable must not be able to re-create
+        the stall this whole mechanism exists to end. If `availability.dlq` is missing the
+        publish raises `UnknownTopicOrPartitionError`, which is caught here and logged — the
+        startup guard in `main.REQUIRED_TOPICS` is what makes that case a misconfiguration
+        rather than a routine one.
+        """
+        try:
+            await self.producer.send_and_wait(
+                DLQ_TOPIC,
+                value=msg.value,
+                key=f"{msg.topic}:{msg.partition}",
+                headers=[
+                    ("original_topic", msg.topic.encode()),
+                    ("original_partition", str(msg.partition).encode()),
+                    ("original_offset", str(msg.offset).encode()),
+                    ("attempts", str(self._attempts).encode()),
+                    ("error", str(_failure_shape(exc)).encode()),
+                ],
+            )
+        except Exception as dlq_exc:  # noqa: BLE001 — a dead DLQ must not re-create the stall
+            log.error(
+                "dead_letter_publish_failed",
+                topic=msg.topic,
+                partition=msg.partition,
+                offset=msg.offset,
+                error=_failure_shape(dlq_exc),
+            )
+            return
+        log.error(
+            "message_dead_lettered",
+            topic=msg.topic,
+            partition=msg.partition,
+            offset=msg.offset,
+            dlq_topic=DLQ_TOPIC,
+            attempts=self._attempts,
+        )
 
     def _retry_later(self, msg: Any) -> None:
         """
@@ -429,22 +534,44 @@ class StateMachineConsumer:
             )
             return
 
-        # send_and_wait, never a bare send: the shared producer factory sets a batching window,
-        # so a bare send can return before the broker acks and the offset commit would overtake
-        # the record (research Pattern 4).
-        await self.producer.send_and_wait(
-            EVENTS_TOPIC,
-            value=event.to_bytes(),
-            key=job(event.source, event.restaurant_id),
-        )
-        _maybe_crash("kafka_send")
-        log.info(
-            "availability_event_published",
-            event_id=str(event.event_id),
-            restaurant_id=event.restaurant_id,
-            date=event.date,
-            party_size=event.party_size,
-        )
+        if event.event_id in self._acked_event_ids:
+            # This exact event was already ACKED BY THE BROKER during an earlier attempt at
+            # this same offset, and the attempt then failed further down (CR-01, iteration 3).
+            # Without this check every retry re-sent it: `set_nx_ex` returns False,
+            # `_crashed_mid_emit` reads a durable record still PENDING (because `_discard()`
+            # threw the buffered write away) and answers True, and the event goes out again on
+            # every single retry — ~43k duplicate events a day against a permanent failure in
+            # `_flush_slot`. Phase 4's Layer-2 key dedupes the notification, but nothing
+            # dedupes the topic, the insert attempt or the log stream.
+            #
+            # The remaining steps still run. Both are idempotent (ON CONFLICT DO NOTHING, and
+            # an HSET of the same record), and skipping them would leave the slot PENDING with
+            # its event already on the wire — the one state the emit ordering exists to avoid.
+            log.info(
+                "emit_skipped_already_acked",
+                event_id=str(event.event_id),
+                restaurant_id=event.restaurant_id,
+            )
+        else:
+            # send_and_wait, never a bare send: the shared producer factory sets a batching
+            # window, so a bare send can return before the broker acks and the offset commit
+            # would overtake the record (research Pattern 4).
+            await self.producer.send_and_wait(
+                EVENTS_TOPIC,
+                value=event.to_bytes(),
+                key=job(event.source, event.restaurant_id),
+            )
+            # Recorded only AFTER the ack. Recording before would suppress a re-send of an
+            # event the broker never actually took.
+            self._acked_event_ids.add(event.event_id)
+            _maybe_crash("kafka_send")
+            log.info(
+                "availability_event_published",
+                event_id=str(event.event_id),
+                restaurant_id=event.restaurant_id,
+                date=event.date,
+                party_size=event.party_size,
+            )
 
         # The analytics row goes in BEFORE the state write, not after. The insert is
         # idempotent (ON CONFLICT (event_id, "time") DO NOTHING), so attempting it twice is

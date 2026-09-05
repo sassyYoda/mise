@@ -1,4 +1,4 @@
-"""Integration: FOUND-04 — all 5 Kafka topics exist with correct retention. Implemented by Plan 02.
+"""Integration: FOUND-04 — every Kafka topic exists with correct retention. Implemented by Plan 02.
 
 This test requires a container runtime (Docker/Podman) to spin up the KafkaContainer
 testcontainers fixture. It is skipped automatically if no runtime is available.
@@ -15,6 +15,7 @@ EXPECTED_RETENTION_MS = {
     "availability.raw": 86_400_000,         # 24h
     "availability.events": 604_800_000,     # 7d
     "polls.completed": 604_800_000,         # 7d
+    "availability.dlq": 604_800_000,        # 7d — state machine dead-letter topic (CR-01)
     "notifications.queued": 2_592_000_000,  # 30d
     "notifications.sent": 2_592_000_000,    # 30d
 }
@@ -69,11 +70,15 @@ async def _describe_topic_configs(bootstrap: str, topic_names: list[str]) -> dic
         await admin.close()
 
 
-def test_all_five_topics_have_retention(kafka_container):
+def test_every_named_topic_has_retention(kafka_container):
     """
     Run scripts/create_topics.py against testcontainers Kafka.
-    Assert all 5 topics exist with correct retention.ms.
+    Assert every Named-Symbol topic exists with correct retention.ms.
     Run twice; assert idempotency (no error).
+
+    The list is authoritative and must stay in step with both services' REQUIRED_TOPICS
+    startup guard: a topic created here but not guarded fails silently per-publish, and a
+    topic guarded but not created here refuses to start.
     """
     bootstrap = kafka_container.get_bootstrap_server()
 
@@ -83,7 +88,7 @@ def test_all_five_topics_have_retention(kafka_container):
     # Second run — idempotent no-op
     asyncio.run(_run_create_topics(bootstrap))
 
-    # Verify all 5 topics exist with correct retention
+    # Verify every topic exists with correct retention
     configs = asyncio.run(_describe_topic_configs(bootstrap, list(EXPECTED_RETENTION_MS.keys())))
 
     assert set(configs.keys()) == set(EXPECTED_RETENTION_MS.keys()), (

@@ -37,6 +37,11 @@ log = get_logger(__name__)
 REQUIRED_TOPICS: set[str] = {
     "availability.raw",
     "availability.events",
+    # The state machine's dead-letter topic (CR-01). Guarded here as well so a deployment
+    # that skipped `make topics` fails at startup rather than at the moment the pipeline is
+    # already poisoned — the one moment the DLQ is load-bearing is the worst moment to
+    # discover it does not exist. Both services guard the identical set on purpose.
+    "availability.dlq",
     "polls.completed",
     "notifications.queued",
     "notifications.sent",

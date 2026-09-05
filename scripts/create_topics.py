@@ -8,12 +8,13 @@ Topics and retention:
   availability.raw      1 partition, 24h  (86_400_000 ms)
   availability.events   1 partition, 7d   (604_800_000 ms)
   polls.completed       1 partition, 7d   (604_800_000 ms)
+  availability.dlq      1 partition, 7d   (604_800_000 ms)
   notifications.queued  1 partition, 30d  (2_592_000_000 ms)
   notifications.sent    1 partition, 30d  (2_592_000_000 ms)
 
 Named Symbols (D-27, D-28, D-29):
-  Kafka topics: availability.raw, availability.events, notifications.queued,
-                notifications.sent, polls.completed
+  Kafka topics: availability.raw, availability.events, availability.dlq,
+                notifications.queued, notifications.sent, polls.completed
   Message key: {source}:{restaurant_id}
   Replication factor: 1 (MVP single-broker; documented tradeoff in README, Pitfall 11)
 """
@@ -39,6 +40,16 @@ TOPICS = [
     ),
     NewTopic(
         "polls.completed",
+        num_partitions=1,
+        replication_factor=1,
+        topic_configs={"retention.ms": str(604_800_000)},      # 7d
+    ),
+    # Dead-letter topic (CR-01): one record per message that exhausted its retry cap in the
+    # state machine, carrying the ORIGINAL bytes plus diagnostic headers. 7 days, not 24 hours
+    # like availability.raw, precisely because its job is to outlive the raw record it copies —
+    # a message that poisoned the pipeline on a Friday night must still be there on Monday.
+    NewTopic(
+        "availability.dlq",
         num_partitions=1,
         replication_factor=1,
         topic_configs={"retention.ms": str(604_800_000)},      # 7d
