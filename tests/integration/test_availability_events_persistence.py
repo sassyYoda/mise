@@ -189,3 +189,35 @@ async def test_a_database_outage_is_logged_and_never_raised(db_urls, monkeypatch
         reset_shared_db_singletons()
 
     assert await _rows(db_urls["dsn"]) == [], "nothing may have been written during the outage"
+
+
+@pytest.mark.asyncio
+async def test_a_close_that_matches_no_row_is_logged_distinctly(db_urls, caplog):
+    """IN-03: rowcount was discarded, so a close against a missing row logged as a success."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    await close_event(
+        event_id=UUID(int=999_999),
+        confirmed_at=CONFIRMED_AT,
+        last_seen_at=CONFIRMED_AT,
+    )
+
+    assert "availability_event_close_matched_no_row" in caplog.text, caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_close_that_matches_a_row_does_not_warn(db_urls, caplog):
+    """The distinction only means something if the successful path stays quiet."""
+    import logging
+
+    event = _event("bar")
+    await insert_event(event)
+    caplog.set_level(logging.WARNING)
+    await close_event(
+        event_id=event.event_id,
+        confirmed_at=CONFIRMED_AT,
+        last_seen_at=CONFIRMED_AT,
+    )
+
+    assert "availability_event_close_matched_no_row" not in caplog.text, caplog.text

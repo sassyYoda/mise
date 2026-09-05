@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from datetime import time as dt_time
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, func, literal, update
+from sqlalchemy import CursorResult, Integer, func, literal, update
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -119,6 +119,10 @@ async def close_event(event_id: UUID, confirmed_at: datetime, last_seen_at: date
     The duration is computed IN SQL from the row's own stored `first_seen_at`, so a close can
     never disagree with the insert that created the row, whatever the caller believes. Closures
     are database-only: nothing goes to Kafka (D-45).
+
+    An UPDATE that matches zero rows logs a distinct warning. It is still not an error — this
+    write is best effort by design — but it must be distinguishable from a successful close,
+    which it was not while `rowcount` was discarded.
     """
     try:
         statement = (
@@ -140,8 +144,20 @@ async def close_event(event_id: UUID, confirmed_at: datetime, last_seen_at: date
         )
         session_factory = get_async_session()
         async with session_factory() as session:
-            await session.execute(statement)
+            # CursorResult, not Result: `rowcount` lives on the DBAPI-backed subclass, and
+            # `Session.execute` is typed as returning the base class.
+            result = cast(CursorResult[Any], await session.execute(statement))
+            rowcount = result.rowcount
             await session.commit()
+        if rowcount == 0:
+            # A close that matched nothing is not a close. Discarding rowcount made this log
+            # identically to a successful one, so a missing row (an insert that never happened,
+            # a chunk dropped by retention, a mismatched confirmed_at) was invisible.
+            log.warning(
+                "availability_event_close_matched_no_row",
+                event_id=str(event_id),
+                confirmed_at=confirmed_at.isoformat(),
+            )
     except Exception as exc:  # noqa: BLE001 — best effort: a stalled close never stalls Kafka
         log.error(
             "availability_event_close_failed",
