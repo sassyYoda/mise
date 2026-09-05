@@ -208,9 +208,11 @@ async def topic_partitions(topic: str, bootstrap: str) -> set[int]:
     subscribes, and `topics()` builds and then discards a throwaway `ClusterMetadata`. The
     admin client is metadata-only, so replay stays read-only by construction (D-50, T-02-06).
     """
+    # `start()` INSIDE the try (IN-02): a failed metadata handshake otherwise leaks the
+    # client's open connections. `close()` is safe on a client that never finished starting.
     admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
-    await admin.start()
     try:
+        await admin.start()
         described = await admin.describe_topics([topic])
     finally:
         await admin.close()

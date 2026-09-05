@@ -57,9 +57,12 @@ REQUIRED_TOPICS: set[str] = {
 
 async def _assert_topics_exist(bootstrap_servers: str) -> None:
     """Startup guard: refuse to run if any required topic is missing (D-27)."""
+    # `start()` INSIDE the try (IN-02): a broker that accepts the socket and then fails the
+    # metadata handshake left the client's connections open, which is the same leak WR-04
+    # fixed one level up. `close()` is safe on a client that never finished starting.
     admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap_servers)
-    await admin.start()
     try:
+        await admin.start()
         existing = set(await admin.list_topics())
     finally:
         await admin.close()
