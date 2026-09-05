@@ -5,8 +5,7 @@ Named symbols: SCHED_POLLS, SCHED_POLLS_INFLIGHT, sched_expedite_key,
                CONFIRM_DELAY_MS, EXPEDITE_FLAG_TTL_SECONDS, EXPEDITE_POLL_LUA,
                avail_state_key, avail_meta_key, event_idempotency_key,
                AVAIL_STATE_TTL_SECONDS, EVENT_IDEMPOTENCY_TTL_SECONDS,
-               hset_slot, hgetall_slots, hdel_slot, hset_meta, expire_key,
-               hset_slot_with_ttl, hdel_slot_with_ttl, hset_meta_with_ttl
+               hgetall_slots, hset_slot_with_ttl, hdel_slot_with_ttl, hset_meta_with_ttl
 """
 from __future__ import annotations
 
@@ -85,29 +84,18 @@ def event_idempotency_key(
 # future redis-py bump.
 
 
-async def hset_slot(r: Redis, key: str, field: str, value: str) -> int:
-    """HSET one slot record. Returns 1 if the field is new, 0 if it was updated."""
-    return await cast(Awaitable[int], r.hset(key, field, value))
-
-
 async def hgetall_slots(r: Redis, key: str) -> dict[bytes, bytes]:
     """HGETALL every slot record under ``key``. Returns {} when the key is absent."""
     return await cast(Awaitable[dict[bytes, bytes]], r.hgetall(key))
 
 
-async def hdel_slot(r: Redis, key: str, field: str) -> int:
-    """HDEL one slot record. Returns the number of fields removed (0 or 1)."""
-    return await cast(Awaitable[int], r.hdel(key, field))
-
-
-async def hset_meta(r: Redis, key: str, mapping: Mapping[str, str]) -> int:
-    """HSET a whole metadata mapping in one call. Returns the number of new fields."""
-    return await cast(Awaitable[int], r.hset(key, mapping=dict(mapping)))
-
-
-async def expire_key(r: Redis, key: str, ttl_seconds: int) -> bool:
-    """EXPIRE the whole key — the only TTL mechanism available on Redis 7.2."""
-    return bool(await r.expire(key, ttl_seconds))
+# `hset_slot`, `hdel_slot`, `hset_meta` and `expire_key` used to live here. They were the
+# bare mutations, and after WR-10 moved every caller onto the `_with_ttl` transactions below
+# they had zero callers anywhere — while remaining a two-line route straight back to the
+# defect those transactions exist to prevent (mutate now, EXPIRE later, and a key created
+# with no TTL if anything interrupts the pair). `test_no_setnx_expire_pairs.py` only greps
+# for `.setnx(`, so it would not have caught the reintroduction. They are deleted rather than
+# deprecated, and `tests/unit/test_redis_keys_phase2.py` asserts they stay gone.
 
 
 # -- Atomic mutate-and-refresh helpers (Pitfall 7) --

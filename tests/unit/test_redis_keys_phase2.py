@@ -125,9 +125,35 @@ def test_key_builders_are_total_and_touch_no_redis():
     assert event_idempotency_key(0, "", 0, "", "") == "event:0::0::"
 
 
-def test_hash_helpers_are_exported_so_store_needs_no_casts():
-    """D-42 / Pitfall 3: every cast(Awaitable[T], ...) lives in one module."""
+def test_the_surviving_hash_helpers_are_exported_so_store_needs_no_casts():
+    """D-42 / Pitfall 3: every cast(Awaitable[T], ...) lives in one module.
+
+    That invariant is satisfied by the `_with_ttl` transactions the store actually calls; it
+    was NOT a reason to keep the bare mutations alive. The old form of this test asserted all
+    five originals remained callable, which told the next cleanup pass that four callerless
+    functions were load-bearing (IN-06).
+    """
     import shared.redis_keys as rk
 
-    for name in ("hset_slot", "hgetall_slots", "hdel_slot", "hset_meta", "expire_key"):
+    for name in (
+        "hgetall_slots",
+        "hset_slot_with_ttl",
+        "hdel_slot_with_ttl",
+        "hset_meta_with_ttl",
+    ):
         assert callable(getattr(rk, name)), f"{name} missing from shared.redis_keys"
+
+
+def test_the_non_atomic_hash_helpers_stay_deleted():
+    """WR-03: a bare mutation plus a separate EXPIRE is the shape WR-10 removed.
+
+    Re-adding one is two lines and lints clean, and `test_no_setnx_expire_pairs.py` only
+    greps for `.setnx(`, so nothing else stands in the way.
+    """
+    import shared.redis_keys as rk
+
+    for gone in ("hset_slot", "hdel_slot", "hset_meta", "expire_key"):
+        assert not hasattr(rk, gone), (
+            f"{gone} is the non-atomic mutate-then-EXPIRE shape WR-10 removed; use the "
+            "matching _with_ttl transaction instead"
+        )
