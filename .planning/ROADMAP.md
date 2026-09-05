@@ -169,7 +169,33 @@ Plans:
   4. Phone numbers stored via `POST /watches` appear in the database as `\x...` AES-256-GCM ciphertext via pgcrypto (not plaintext) and are decrypted only at notification send time; rate limiting caps watch creation at 60 req/min per IP.
   5. Admin routes under `/admin` (HTTP Basic Auth) expose restaurant CRUD, polling-tier override, and per-restaurant event volume; public `/api/metrics` returns Prometheus-format counters and is accessible without authentication.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 05-01-api-plumbing-preconditions-PLAN.md — Wave 1 — the Wave-0 precondition gate, the shared service timezone, the pure-ASGI error boundary and request logger, lazy config, health/readiness, and `/api/metrics` on the shared registry
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 05-02-watch-create-validation-PLAN.md — Wave 2 — `POST /watches` end to end: email-only user upsert, slug-to-source-rows resolution, the full WATCH-02 validator matrix, the management token and email, `watch:count` recount, and the partial unique index that makes creation idempotent
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 05-03-ratelimit-phone-push-PLAN.md — Wave 3 — the 60/min per-IP fixed-window limiter on the second-to-last forwarded hop, AES-256-GCM phone storage with a masked response, the purpose-checked Bearer dependency, and the `/api/push/*` routes
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 05-04-manage-mutations-rotation-PLAN.md — Wave 4 — `GET /api/manage/{token}`, Bearer list/patch/pause/resume/soft-delete with user-scoped 404s, and the HMAC rotation dry-run proven with a frozen clock (SC2)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 05-05-sse-feed-public-reads-PLAN.md — Wave 5 — the single groupless Kafka consumer and `FeedHub`, `/api/feed/live` with heartbeats and `Last-Event-ID` replay measured under 500 ms against a real server (SC3), `/api/feed/recent`, and the merged restaurant and stats reads
+
+**Wave 6** *(blocked on Wave 5)*
+
+- [ ] 05-06-admin-docs-openapi-PLAN.md — Wave 6 — HTTP-Basic `/admin/*` restaurant CRUD, tier override, event volume and health summary, plus `docs/api.md`, the CI-run curl smoke script, the OpenAPI route snapshot, Make targets and the pending-human Cloud Run SSE runbook
+
 **UI hint**: no
 
 ### Phase 6: Pattern Intelligence & Frontend PWA
