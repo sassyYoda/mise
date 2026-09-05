@@ -2,7 +2,10 @@ version: "3.9"
 
 services:
   kafka:
-    image: bitnami/kafka:3.8
+    # bitnami/kafka:3.8 was withdrawn from Docker Hub (`make up` failed to resolve it);
+    # bitnamilegacy is the drop-in replacement, so every KAFKA_CFG_* var below is
+    # unchanged. Phase 7 may move to an official image with its production profile (D-56).
+    image: bitnamilegacy/kafka:3.8
     container_name: mise-kafka
     ports:
       - "9092:9092"

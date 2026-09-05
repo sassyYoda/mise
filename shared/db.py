@@ -107,9 +107,21 @@ class NotificationLog(Base):
 # ORM classes below are for querying only; never use Base.metadata.create_all() for these.
 
 class AvailabilityEvent(Base):
+    """One confirmed availability event.
+
+    Primary key is ``(time, event_id)`` and matches migration 0008's unique index —
+    ``restaurant_id`` is deliberately NOT part of it, because every slot confirmed by
+    one poll shares that poll's ``time`` and a ``(time, restaurant_id)`` key collides
+    on the second slot (research B-3). Close by ``WHERE event_id = :event_id AND
+    "time" = :confirmed_at`` for a single-chunk index scan.
+    """
+
     __tablename__ = "availability_events"
     time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, primary_key=True)
-    restaurant_id: Mapped[int] = mapped_column(BigInteger, nullable=False, primary_key=True)
+    event_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, primary_key=True)
+    # D-52: the SOURCE PLATFORM id (OpenTable rid / Resy venue id), as poll_log.restaurant_id
+    # already is — NOT restaurants.id. Join key against restaurants is (source, platform_id).
+    restaurant_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     time_slot: Mapped[dt_time | None] = mapped_column(Time, nullable=True)

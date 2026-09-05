@@ -5,6 +5,7 @@ Redis 7.2 container with a stub adapter/publisher, so the branch under test is t
 production release code and not a re-implementation of it.
 """
 import asyncio
+import sys
 import time
 from typing import Any
 
@@ -23,6 +24,24 @@ from shared.scheduler.lua import LuaScheduler
 pytestmark = pytest.mark.integration
 
 JOB = "opentable:42"
+
+# services/poller/config.py freezes REDIS_URL / KAFKA_BOOTSTRAP_SERVERS into module
+# constants at IMPORT time. Importing poll_loop here pulls that module in during
+# collection, before test_poller_smoke.py sets those env vars — which would pin the
+# smoke test's poller to the localhost defaults instead of its testcontainers. Evict
+# the poller modules on teardown so a later import re-reads the environment.
+_POLLER_MODULES = (
+    "services.poller.main",
+    "services.poller.scheduler",
+    "services.poller.config",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_poller_module_import_state():
+    yield
+    for name in _POLLER_MODULES:
+        sys.modules.pop(name, None)
 
 
 class _StubAdapter:
